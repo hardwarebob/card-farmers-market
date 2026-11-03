@@ -66,7 +66,10 @@ def newest(releases, current=VERSION, kind=None):
 
 
 def check():
-    """What to offer right now (see newest), from GitHub."""
+    """What to offer right now (see newest), from GitHub. A copy run from source has no version
+    to compare, so it's never offered anything."""
+    if version_key(VERSION) is None:
+        return None
     releases = get_json(f"https://api.github.com/repos/{REPO}/releases?per_page=20",
                         headers={"Accept": "application/vnd.github+json"})
     return newest(releases, VERSION, install_kind())
