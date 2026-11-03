@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Card Farm
+Comment=Farm Steam trading cards in the background
+Exec=card-farm --background
+Icon=io.github.cardfarm.CardFarm
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

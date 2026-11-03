@@ -51,9 +51,14 @@ def _is_64bit(path):
     return head[:4] == b"\x7fELF" and head[4] == 2
 
 
-def steam_running():
-    return subprocess.run(["pgrep", "-x", "steam"], capture_output=True).returncode == 0 or \
-        subprocess.run(["pgrep", "-f", "steamrt64/steam"], capture_output=True).returncode == 0
+def steam_pid():
+    """The Steam client's process id (its oldest process), or None when Steam isn't running. A new
+    id means Steam restarted, and games it knew about have to say hello again."""
+    for cmd in (["pgrep", "-o", "-x", "steam"], ["pgrep", "-o", "-f", "steamrt64/steam"]):
+        out = subprocess.run(cmd, capture_output=True, text=True).stdout.split()
+        if out:
+            return int(out[0])
+    return None
 
 
 def game_you_are_playing():
@@ -75,18 +80,29 @@ class Idler:
                 del self.procs[appid]
         return set(self.procs)
 
-    def start(self, appid):
-        if appid in self.running():
-            return True
+    def start(self, appids):
+        """Start these games together; returns the ones Steam wouldn't take.
+
+        Call it from the farm's own long-lived thread: each child's PR_SET_PDEATHSIG fires when the
+        thread that started it ends, not just the whole program."""
+        appids = [a for a in appids if a not in self.running()]
+        if not appids:
+            return set()
         self.library = self.library or find_library(self.data_dir)
-        env = dict(os.environ, SteamAppId=str(appid), SteamGameId=str(appid))
-        p = subprocess.Popen([sys.executable, "-I", "-c", CHILD, self.library], env=env,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        time.sleep(3)
-        if p.poll() is not None:
-            return False
-        self.procs[appid] = p
-        return True
+        started = {}
+        for appid in appids:
+            env = dict(os.environ, SteamAppId=str(appid), SteamGameId=str(appid))
+            started[appid] = subprocess.Popen([sys.executable, "-I", "-c", CHILD, self.library], env=env,
+                                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                              start_new_session=True)
+        time.sleep(3)  # SteamAPI_Init fails within a moment when Steam says no
+        failed = set()
+        for appid, p in started.items():
+            if p.poll() is None:
+                self.procs[appid] = p
+            else:
+                failed.add(appid)
+        return failed
 
     def stop(self, appid):
         p = self.procs.pop(appid, None)

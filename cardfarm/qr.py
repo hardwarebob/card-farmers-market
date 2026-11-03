@@ -1,201 +1,211 @@
-"""A small QR code encoder (byte mode, error correction level M, versions 1-6), enough for Steam's
-sign-in links, so the page needs no outside library. Written from the QR specification (ISO/IEC 18004)."""
+"""QR codes for the sign-in screen: byte mode, error correction level M, versions 1 to 6 (up to
+106 bytes), which is plenty for Steam's sign-in links. Written for Card Farm from the QR Code
+standard (ISO/IEC 18004); the two tables are figures from the standard."""
+import itertools
+import re
 
-# version: (data codewords per block, number of blocks, EC codewords per block) for level M
-BLOCKS = {1: (16, 1, 10), 2: (28, 1, 16), 3: (44, 1, 26), 4: (32, 2, 18), 5: (43, 2, 24), 6: (27, 4, 16)}
-ALIGN = {1: [], 2: [6, 18], 3: [6, 22], 4: [6, 26], 5: [6, 30], 6: [6, 34]}
-LEVEL_M = 0b00
-
-# GF(256) with the QR polynomial x^8 + x^4 + x^3 + x^2 + 1
-EXP, LOG = [0] * 512, [0] * 256
-_v = 1
-for _i in range(255):
-    EXP[_i], LOG[_v] = _v, _i
-    _v <<= 1
-    if _v & 0x100:
-        _v ^= 0x11D
-for _i in range(255, 512):
-    EXP[_i] = EXP[_i - 255]
+# version -> (blocks, data codewords per block, error correction codewords per block), level M
+LEVEL_M = {1: (1, 16, 10), 2: (1, 28, 16), 3: (1, 44, 26), 4: (2, 32, 18), 5: (2, 43, 24), 6: (4, 27, 16)}
+# version -> rows (and columns) holding alignment pattern centres
+ALIGNMENT = {1: (), 2: (6, 18), 3: (6, 22), 4: (6, 26), 5: (6, 30), 6: (6, 34)}
 
 
-def _mul(a, b):
-    return 0 if not a or not b else EXP[LOG[a] + LOG[b]]
+# --- error correction: Reed-Solomon over GF(256), field polynomial x^8 + x^4 + x^3 + x^2 + 1 --------
+def _field():
+    powers, logs, value = [], {}, 1
+    for exponent in range(255):
+        powers.append(value)
+        logs[value] = exponent
+        value <<= 1
+        if value > 0xFF:
+            value ^= 0b100011101
+    return powers, logs
 
 
-def _ec_codewords(data, n):
-    """Reed-Solomon remainder of data * x^n by the generator (x - a^0)...(x - a^(n-1))."""
-    gen = [1]
-    for i in range(n):
-        nxt = [0] * (len(gen) + 1)
-        for j, c in enumerate(gen):
-            nxt[j] ^= c
-            nxt[j + 1] ^= _mul(c, EXP[i])
-        gen = nxt
-    rem = list(data) + [0] * n
-    for i in range(len(data)):
-        factor = rem[i]
-        if factor:
-            for j in range(1, len(gen)):
-                rem[i + j] ^= _mul(gen[j], factor)
-    return rem[len(data):]
+POWERS, LOGS = _field()
 
 
-def _codewords(text):
-    data = text.encode("utf-8")
-    for version, (per_block, blocks, _) in BLOCKS.items():
-        if len(data) + 2 <= per_block * blocks:  # 4-bit mode + 8-bit count + data + terminator fit
+def _times(a, b):
+    return POWERS[(LOGS[a] + LOGS[b]) % 255] if a and b else 0
+
+
+def _check_words(block, count):
+    """The `count` error correction codewords for one block: the remainder of block * x^count
+    divided by (x - 1)(x - a)(x - a^2)...(x - a^(count-1)), highest power first."""
+    divisor = [1]
+    for k in range(count):
+        root, longer = POWERS[k], divisor + [0]
+        for i, coef in enumerate(divisor):
+            longer[i + 1] ^= _times(coef, root)
+        divisor = longer
+    remainder = list(block) + [0] * count
+    for i in range(len(block)):
+        lead = remainder[i]
+        for j in range(1, count + 1):
+            remainder[i + j] ^= _times(divisor[j], lead)
+    return remainder[len(block):]
+
+
+# --- the message ---------------------------------------------------------------------------------
+def _message(data):
+    """(version, every codeword in the order it's drawn) for these bytes."""
+    for version, (blocks, per_block, _) in LEVEL_M.items():
+        capacity = blocks * per_block
+        if 4 + 8 + 8 * len(data) <= 8 * capacity:
             break
     else:
         raise ValueError("too long for a small QR code")
-    per_block, blocks, ec_len = BLOCKS[version]
-    capacity = per_block * blocks
-    bits = "0100" + format(len(data), "08b") + "".join(format(b, "08b") for b in data)
-    bits += "0" * min(4, capacity * 8 - len(bits))
+    blocks, per_block, check_count = LEVEL_M[version]
+    bits = "0100" + f"{len(data):08b}" + "".join(f"{byte:08b}" for byte in data)  # byte mode, count, data
+    bits += "0" * min(4, 8 * capacity - len(bits))  # terminator
     bits += "0" * (-len(bits) % 8)
     words = [int(bits[i:i + 8], 2) for i in range(0, len(bits), 8)]
-    filler = 0
-    while len(words) < capacity:  # alternate the two pad bytes the spec names
-        words.append((0xEC, 0x11)[filler % 2])
-        filler += 1
-    groups = [words[i * per_block:(i + 1) * per_block] for i in range(blocks)]
-    ecs = [_ec_codewords(g, ec_len) for g in groups]
-    out = [g[i] for i in range(per_block) for g in groups]
-    out += [e[i] for i in range(ec_len) for e in ecs]
-    return version, out
+    words += itertools.islice(itertools.cycle((0b11101100, 0b00010001)), capacity - len(words))
+    groups = [words[n * per_block:(n + 1) * per_block] for n in range(blocks)]
+    checks = [_check_words(group, check_count) for group in groups]
+    interleaved = [group[i] for i in range(per_block) for group in groups]
+    interleaved += [check[i] for i in range(check_count) for check in checks]
+    return version, interleaved
 
 
-class _Grid:
-    def __init__(self, version):
-        self.size = 17 + 4 * version
-        self.dark = [[False] * self.size for _ in range(self.size)]
-        self.fixed = [[False] * self.size for _ in range(self.size)]
-
-    def set(self, x, y, dark, fixed=True):
-        self.dark[y][x] = dark
-        self.fixed[y][x] = self.fixed[y][x] or fixed
+# --- the symbol ----------------------------------------------------------------------------------
+def _format_cells(size):
+    """Both copies of the 15 format bits as (row, column), most significant bit first."""
+    near_top_left = [(8, c) for c in (0, 1, 2, 3, 4, 5, 7, 8)] + [(r, 8) for r in (7, 5, 4, 3, 2, 1, 0)]
+    split = [(r, 8) for r in range(size - 1, size - 8, -1)] + [(8, c) for c in range(size - 8, size)]
+    return near_top_left, split
 
 
-def _function_patterns(g, version):
-    n = g.size
-    for cx, cy in ((3, 3), (n - 4, 3), (3, n - 4)):  # finders with their white separators
-        for dy in range(-4, 5):
-            for dx in range(-4, 5):
-                x, y = cx + dx, cy + dy
-                if 0 <= x < n and 0 <= y < n:
-                    ring = max(abs(dx), abs(dy))
-                    g.set(x, y, ring not in (2, 4))
-    for i in range(8, n - 8):  # timing
-        g.set(i, 6, i % 2 == 0)
-        g.set(6, i, i % 2 == 0)
-    centers = ALIGN[version]
-    for cy in centers:
-        for cx in centers:
-            if g.fixed[cy][cx]:
-                continue  # overlaps a finder
-            for dy in range(-2, 3):
-                for dx in range(-2, 3):
-                    g.set(cx + dx, cy + dy, max(abs(dx), abs(dy)) != 1)
-    _format_bits(g, 0)  # reserve the format areas (real bits go in after masking)
-    g.set(8, n - 8, True)
+def _format_word(mask):
+    """Level M (00) and the mask number, a BCH(15,5) check, then the standard's XOR pattern."""
+    head = mask  # 0b00 << 3 | mask
+    remainder = head << 10
+    for top in range(14, 9, -1):
+        if remainder >> top & 1:
+            remainder ^= 0b10100110111 << (top - 10)
+    return (head << 10 | remainder) ^ 0b101010000010010
 
 
-def _format_bits(g, mask):
-    data = (LEVEL_M << 3) | mask
-    rem = data
-    for _ in range(10):
-        rem = (rem << 1) ^ ((rem >> 9) * 0x537)
-    bits = ((data << 10) | rem) ^ 0x5412
-    bit = lambda i: (bits >> i) & 1 == 1
-    n = g.size
-    for i in range(6):
-        g.set(8, i, bit(i))
-    g.set(8, 7, bit(6))
-    g.set(8, 8, bit(7))
-    g.set(7, 8, bit(8))
-    for i in range(9, 15):
-        g.set(14 - i, 8, bit(i))
-    for i in range(8):
-        g.set(n - 1 - i, 8, bit(i))
-    for i in range(8, 15):
-        g.set(8, n - 15 + i, bit(i))
-    g.set(8, n - 8, True)
+def _fixed_parts(version):
+    """(dark, reserved) grids holding the finder, timing and alignment patterns, the dark module
+    and the (still empty) format areas. Indexed [row][column]."""
+    size = 17 + 4 * version
+    dark = [[False] * size for _ in range(size)]
+    reserved = [[False] * size for _ in range(size)]
+
+    def put(r, c, is_dark):
+        dark[r][c], reserved[r][c] = is_dark, True
+
+    for top, left in ((0, 0), (0, size - 7), (size - 7, 0)):  # finders, with their light border
+        for r in range(max(top - 1, 0), min(top + 8, size)):
+            for c in range(max(left - 1, 0), min(left + 8, size)):
+                dr, dc = r - top, c - left
+                inside = 0 <= dr <= 6 and 0 <= dc <= 6
+                put(r, c, inside and (dr in (0, 6) or dc in (0, 6) or (2 <= dr <= 4 and 2 <= dc <= 4)))
+    for i in range(8, size - 8):  # timing lines
+        put(6, i, i % 2 == 0)
+        put(i, 6, i % 2 == 0)
+    for r in ALIGNMENT[version]:
+        for c in ALIGNMENT[version]:
+            if reserved[r][c]:
+                continue  # that spot belongs to a finder
+            for dr in range(-2, 3):
+                for dc in range(-2, 3):
+                    put(r + dr, c + dc, abs(dr) == 2 or abs(dc) == 2 or dr == dc == 0)
+    for cells in _format_cells(size):
+        for r, c in cells:
+            put(r, c, False)
+    put(size - 8, 8, True)  # always dark
+    return dark, reserved
 
 
-def _place(g, words):
-    bits = [(w >> (7 - i)) & 1 == 1 for w in words for i in range(8)]
-    n, k, right = g.size, 0, g.size - 1
-    while right >= 1:
+def _data_cells(reserved):
+    """Free cells in drawing order: two-wide columns from the right, alternately up and down,
+    stepping over the vertical timing line."""
+    size = len(reserved)
+    right, upward = size - 1, True
+    while right > 0:
         if right == 6:
-            right = 5  # the vertical timing column is skipped
-        upward = ((right + 1) & 2) == 0
-        for vert in range(n):
-            y = n - 1 - vert if upward else vert
-            for x in (right, right - 1):
-                if not g.fixed[y][x]:
-                    g.dark[y][x] = bits[k] if k < len(bits) else False
-                    k += 1
+            right = 5
+        for r in (range(size - 1, -1, -1) if upward else range(size)):
+            for c in (right, right - 1):
+                if not reserved[r][c]:
+                    yield r, c
+        upward = not upward
         right -= 2
 
 
-MASKS = [lambda x, y: (x + y) % 2 == 0, lambda x, y: y % 2 == 0, lambda x, y: x % 3 == 0,
-         lambda x, y: (x + y) % 3 == 0, lambda x, y: (x // 3 + y // 2) % 2 == 0,
-         lambda x, y: x * y % 2 + x * y % 3 == 0, lambda x, y: (x * y % 2 + x * y % 3) % 2 == 0,
-         lambda x, y: ((x + y) % 2 + x * y % 3) % 2 == 0]
+def _masked(mask, r, c):
+    """The standard's eight mask conditions (its i is the row, j the column)."""
+    if mask == 0:
+        return (r + c) % 2 == 0
+    if mask == 1:
+        return r % 2 == 0
+    if mask == 2:
+        return c % 3 == 0
+    if mask == 3:
+        return (r + c) % 3 == 0
+    if mask == 4:
+        return (r // 2 + c // 3) % 2 == 0
+    if mask == 5:
+        return (r * c) % 2 + (r * c) % 3 == 0
+    if mask == 6:
+        return ((r * c) % 2 + (r * c) % 3) % 2 == 0
+    return ((r + c) % 2 + (r * c) % 3) % 2 == 0
 
 
-def _apply_mask(g, m):
-    for y in range(g.size):
-        for x in range(g.size):
-            if not g.fixed[y][x] and MASKS[m](x, y):
-                g.dark[y][x] = not g.dark[y][x]
+FINDER_LIKE = re.compile("(?=00001011101|10111010000)")
 
 
-def _penalty(rows):
-    n, score = len(rows), 0
-    lines = rows + [list(col) for col in zip(*rows)]
-    finder_a, finder_b = [1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1]
-    for line in lines:
-        run = 1
-        for i in range(1, n + 1):
-            if i < n and line[i] == line[i - 1]:
-                run += 1
-            else:
-                if run >= 5:
-                    score += run - 2
-                run = 1
-        vals = [int(v) for v in line]
-        for i in range(n - 10):
-            if vals[i:i + 11] in (finder_a, finder_b):
-                score += 40
-    for y in range(n - 1):
-        for x in range(n - 1):
-            if rows[y][x] == rows[y][x + 1] == rows[y + 1][x] == rows[y + 1][x + 1]:
+def _penalty(dark):
+    """The standard's four penalty rules; the mask with the lowest total is used."""
+    size, score = len(dark), 0
+    for line in dark + [list(column) for column in zip(*dark)]:
+        for _, run in itertools.groupby(line):
+            length = len(list(run))
+            if length >= 5:
+                score += 3 + length - 5
+        score += 40 * len(FINDER_LIKE.findall("".join("1" if d else "0" for d in line)))
+    for r in range(size - 1):
+        for c in range(size - 1):
+            if dark[r][c] == dark[r][c + 1] == dark[r + 1][c] == dark[r + 1][c + 1]:
                 score += 3
-    dark = sum(map(sum, rows))
-    score += abs(dark * 20 - n * n * 10) // (n * n) * 10
-    return score
+    share = 100 * sum(map(sum, dark)) / size ** 2
+    return score + 10 * int(abs(share - 50) // 5)
 
 
 def matrix(text):
     """Rows of booleans (True = dark), without the quiet zone."""
-    version, words = _codewords(text)
+    version, words = _message(text.encode("utf-8"))
+    bits = [word >> (7 - k) & 1 for word in words for k in range(8)]
+    base, reserved = _fixed_parts(version)
+    cells = list(_data_cells(reserved))
     best = None
-    for m in range(8):
-        g = _Grid(version)
-        _function_patterns(g, version)
-        _place(g, words)
-        _apply_mask(g, m)
-        _format_bits(g, m)
-        score = _penalty(g.dark)
+    for mask in range(8):
+        dark = [row[:] for row in base]
+        for n, (r, c) in enumerate(cells):  # leftover cells get 0 bits
+            dark[r][c] = bool(n < len(bits) and bits[n]) != _masked(mask, r, c)
+        word = _format_word(mask)
+        for copy in _format_cells(len(dark)):
+            for k, (r, c) in enumerate(copy):
+                dark[r][c] = bool(word >> (14 - k) & 1)
+        score = _penalty(dark)
         if best is None or score < best[0]:
-            best = (score, g.dark)
+            best = (score, dark)
     return best[1]
 
 
-def svg(text, scale=8, quiet=4):
+def svg(text, quiet=4):
+    """The code as an SVG drawing that scales to whatever box it's put in."""
     rows = matrix(text)
-    size = (len(rows) + 2 * quiet) * scale
-    path = "".join(f"M{(x + quiet) * scale},{(y + quiet) * scale}h{scale}v{scale}h-{scale}z"
-                   for y, row in enumerate(rows) for x, dark in enumerate(row) if dark)
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 {size} {size}">'
-            f'<rect width="100%" height="100%" fill="#fff"/><path d="{path}" fill="#000"/></svg>')
+    side = len(rows) + 2 * quiet
+    runs = []
+    for r, row in enumerate(rows):
+        c = 0
+        for is_dark, group in itertools.groupby(row):
+            width = len(list(group))
+            if is_dark:
+                runs.append(f"M{c + quiet} {r + quiet}h{width}v1h-{width}z")
+            c += width
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {side} {side}" shape-rendering="crispEdges">'
+            f'<rect width="{side}" height="{side}" fill="#fff"/><path d="{"".join(runs)}" fill="#000"/></svg>')

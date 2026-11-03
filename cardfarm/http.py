@@ -12,16 +12,25 @@ class HttpError(Exception):
         self.status, self.body = status, body
 
 
+def _quoted(text):
+    return '"' + str(text).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def request(url, data=None, cookies=None, headers=None, timeout=30):
-    """Returns (status, body text). data (a dict) makes it a form POST."""
-    cmd = ["curl", "-s", "-L", "--max-time", str(timeout), "-A", UA, "-w", "\n%{http_code}"]
+    """Returns (status, body text). data (a dict) makes it a form POST.
+
+    Cookies, headers and the form go to curl as a config on stdin, never on its command line,
+    which any program on the PC can read."""
+    config = [f"url = {_quoted(url)}"]
     if cookies:
-        cmd += ["-b", "; ".join(f"{k}={v}" for k, v in cookies.items())]
+        config.append(f"cookie = {_quoted('; '.join(f'{k}={v}' for k, v in cookies.items()))}")
     for k, v in (headers or {}).items():
-        cmd += ["-H", f"{k}: {v}"]
+        config.append(f"header = {_quoted(f'{k}: {v}')}")
     if data is not None:
-        cmd += ["--data-binary", "@-"]
-    out = subprocess.run(cmd + [url], input=urllib.parse.urlencode(data or {}).encode(),
+        config.append(f"data-binary = {_quoted(urllib.parse.urlencode(data))}")
+    # -c: keep cookies Steam sets on the way (the inventory page redirects through a cookie check)
+    cmd = ["curl", "-s", "-L", "-c", "/dev/null", "--max-time", str(timeout), "-A", UA, "-w", "\n%{http_code}", "-K", "-"]
+    out = subprocess.run(cmd, input="\n".join(config).encode() + b"\n",
                          capture_output=True, timeout=timeout + 10).stdout.decode("utf-8", "replace")
     body, _, status = out.rpartition("\n")
     return int(status or 0), body

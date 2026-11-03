@@ -1,19 +1,31 @@
-"""The farm: keeps the right games idling, notices drops, and sells / gems / queues each new card."""
+"""The farm: keeps the right games idling, notices drops, and sells / gems / queues each new card.
+On request it also sorts the other things in your inventories (skins, cases, ...) for selling."""
 import json
 import os
-import queue
 import subprocess
 import threading
 import time
 import traceback
 
-from . import rules, steam
+from . import qr, rules, steam
 from .auth import Session
-from .idler import Idler, game_you_are_playing, steam_running
+from .idler import Idler, game_you_are_playing, steam_pid
 
 BADGES_EVERY = 10 * 60
 INVENTORY_EVERY = 30 * 60
+ITEMS_EVERY = 60 * 60
 SKIP_FOR = 12 * 3600
+
+
+def fresh_state():
+    return {"seen": [], "review": [], "history": [], "games": [], "skipped": {}, "idling": {},
+            "stats": {"drops": 0, "listed": 0, "listed_cents": 0, "gems": 0, "items_listed": 0, "items_cents": 0},
+            "baseline": False,
+            "queue": [],     # [{"action", "entry"}] still to do, in order; kept across restarts
+            "kept": [],      # asset ids you chose to keep, so they aren't offered again
+            "owed": {},      # appid -> card drops the badges page showed that the inventory hasn't yet
+            "steamid": None,
+            "items": {"inventories": [], "review": [], "seen": {}, "checked": 0}}
 
 
 class Farm:
@@ -25,16 +37,28 @@ class Farm:
         self.settings = rules.load_settings(self._path("settings.json"))
         self.prices = steam.Prices(self._path("prices.json"))
         self.idler = Idler(data_dir)
-        self.state = {"seen": [], "review": [], "history": [], "games": [], "skipped": {}, "idling": {},
-                      "stats": {"drops": 0, "listed": 0, "listed_cents": 0, "gems": 0}, "baseline": False}
+        self.state = fresh_state()
         if os.path.exists(self._path("state.json")):
-            self.state.update(json.load(open(self._path("state.json"))))
+            with open(self._path("state.json")) as f:
+                saved = json.load(f)
+            self.state.update(saved)
+            self.state["stats"] = dict(fresh_state()["stats"], **saved.get("stats", {}))
+            self.state["items"] = dict(fresh_state()["items"], **saved.get("items", {}))
+        self.state["idling"] = {}  # the idlers went away with the last run
+        if self.session.signed_in:
+            self._for_account()
         self.status = "starting"
         self.error = None
-        self.jobs = queue.Queue()  # (action, review entry) done one at a time, paced for Steam
-        self.working = 0
+        self.signin_error = None
+        self.busy = set()  # long jobs running for the page: "cards", "items"
+        self.notify = _notify
         self._next_badges = self._next_inventory = 0
+        self._next_items = time.time() + ITEMS_EVERY
+        self._steam = None
+        self._poller = None
+        self._qr_svg = (None, None)
         self._wake = threading.Event()
+        self._jobs = threading.Event()
 
     def _path(self, name):
         return os.path.join(self.data, name)
@@ -42,7 +66,8 @@ class Farm:
     def save(self):
         with self.lock:
             tmp = self._path("state.json.tmp")
-            json.dump(self.state, open(tmp, "w"))
+            with open(tmp, "w") as f:
+                json.dump(self.state, f)
             os.replace(tmp, self._path("state.json"))
 
     def log(self, text, kind="info"):
@@ -55,25 +80,47 @@ class Farm:
     def update_settings(self, patch):
         with self.lock:
             self.settings.update(rules.clean(patch))
-            json.dump(self.settings, open(self._path("settings.json"), "w"), indent=1)
+            with open(self._path("settings.json"), "w") as f:
+                json.dump(self.settings, f, indent=1)
         self.poke()
 
     def start_sign_in(self):
-        qr = self.session.start_qr()
-        threading.Thread(target=self._wait_for_phone, daemon=True).start()
-        return qr
+        self.signin_error = None
+        qr_code = self.session.start_qr()
+        with self.lock:  # one poller follows whichever code is showing
+            if self._poller is None:
+                self._poller = threading.Thread(target=self._wait_for_phone, daemon=True)
+                self._poller.start()
+        return qr_code
 
     def _wait_for_phone(self):
-        while self.session.qr:
-            time.sleep(self.session.qr["interval"])
+        while True:
+            with self.lock:
+                pending = self.session.qr
+                if not pending:
+                    self._poller = None
+                    return
+            time.sleep(pending["interval"])
             try:
                 if self.session.poll_qr():
                     self.log(f"Signed in as {self.session.account}")
+                    self._for_account()
                     self._next_badges = self._next_inventory = 0
                     self.poke()
-                    return
+                elif not self.session.qr:
+                    self.signin_error = "That code expired. Show a new one to try again."
             except Exception as e:
-                self.error = f"Sign-in: {e}"
+                self.signin_error = f"Steam didn't answer the sign-in check ({e}); still trying."
+
+    def _for_account(self):
+        """What Card Farm remembers belongs to one Steam account: signing in as another starts afresh,
+        so that account's cards aren't mistaken for new drops."""
+        with self.lock:
+            if self.state.get("steamid") not in (None, self.session.steamid):
+                history = self.state["history"]
+                self.state = fresh_state()
+                self.state["history"] = history
+            self.state["steamid"] = self.session.steamid
 
     def sign_out(self):
         self.idler.stop_all()
@@ -84,6 +131,10 @@ class Farm:
 
     def poke(self):
         self._wake.set()
+
+    def refresh(self):
+        self._next_badges = self._next_inventory = 0
+        self.poke()
 
     # --- main loop ---------------------------------------------------------------------------
     def run(self):
@@ -103,20 +154,28 @@ class Farm:
         s = self.settings
         if not self.session.signed_in:
             return self._idle_none("Sign in to start")
+        if s["items_new"] != "off" and time.time() >= self._next_items:
+            self._next_items = time.time() + ITEMS_EVERY
+            self._check_items(manual=False)
         if not s["farming"]:
             return self._idle_none("Stopped")
-        if not steam_running():
+        pid = steam_pid()
+        if not pid:
             return self._idle_none("Waiting for Steam to start")
+        if self._steam and pid != self._steam and self.idler.running():
+            self.log("Steam restarted; starting the games again")
+            self._idle_none("Steam restarted")
+        self._steam = pid
         playing = game_you_are_playing() if s["pause_when_playing"] else None
         if playing:
             return self._idle_none(f"Paused while you play ({self._name(playing)})")
         now = time.time()
-        if now >= self._next_badges:
-            self._refresh_badges()
+        if now >= self._next_badges or now >= self._next_inventory:
+            dropped = self._refresh_badges()
             self._next_badges = now + BADGES_EVERY
-        if now >= self._next_inventory:
-            self._check_inventory()
-            self._next_inventory = now + INVENTORY_EVERY
+            if dropped or now >= self._next_inventory:  # the inventory is always read after fresh badges
+                self._check_inventory()
+                self._next_inventory = time.time() + INVENTORY_EVERY
         self._check_stalls()
         self._choose_games()
         self._price_one_game()
@@ -132,23 +191,32 @@ class Farm:
         return next((g["name"] for g in self.state["games"] if g["appid"] == appid), str(appid))
 
     def _refresh_badges(self):
+        """Reads the badges page; returns True when cards dropped since the last read."""
         games = steam.badges(self.session)
         dropped = False
         with self.lock:
-            old = {g["appid"]: g["drops"] for g in self.state["games"]}
+            old = {g["appid"]: g for g in self.state["games"]}
+            owed = self.state["owed"]
             for g in games:
-                if str(g["appid"]) in self.state["idling"] and g["drops"] < old.get(g["appid"], g["drops"]):
-                    self.state["idling"][str(g["appid"])].update(last_drop=time.time(), restarts=0)
+                before = old.get(g["appid"])
+                if not before:
+                    continue
+                got = max(before["drops"] - g["drops"],
+                          (g["earned"] - g["drops"]) - (before["earned"] - before["drops"]))
+                if got > 0:
+                    owed[str(g["appid"])] = owed.get(str(g["appid"]), 0) + got
                     dropped = True
+                    info = self.state["idling"].get(str(g["appid"]))
+                    if info:
+                        info.update(last_drop=time.time(), clock=time.time(), restarts=0)
             self.state["games"] = games
-        if dropped:  # fetch the new card now rather than in half an hour
-            self._check_inventory()
-            self._next_inventory = time.time() + INVENTORY_EVERY
+        return dropped
 
-    def _candidates(self):
+    def _candidates(self, with_skipped=False):
         now, s = time.time(), self.settings
-        skipped = {int(a) for a, until in self.state["skipped"].items() if until > now}
-        games = [g for g in self.state["games"] if g["drops"] > 0 and g["appid"] not in skipped]
+        with self.lock:
+            skipped = {int(a) for a, until in self.state["skipped"].items() if until > now}
+            games = [g for g in self.state["games"] if g["drops"] > 0 and (with_skipped or g["appid"] not in skipped)]
         if s["order"] == "most":
             games.sort(key=lambda g: -g["drops"])
         elif s["order"] == "fewest":
@@ -163,42 +231,55 @@ class Farm:
         return sum(normal) / len(normal) if normal else None
 
     def _choose_games(self):
+        """Idle the games that should be idling. Starting takes a few seconds, so it happens without
+        holding the lock (the window keeps reading the state meanwhile)."""
         want = [g["appid"] for g in self._candidates()[: self.settings["games_at_once"]]]
         with self.lock:
+            stop = [int(k) for k in self.state["idling"] if int(k) not in want]
+            for appid in stop:
+                self.state["idling"].pop(str(appid))
+        for appid in stop:
+            self.idler.stop(appid)
+        failed = self.idler.start(want)
+        now = time.time()
+        with self.lock:
             idling = self.state["idling"]  # keyed by str(appid), like everything saved as JSON
-            for key in list(idling):
-                if int(key) not in want:
-                    self.idler.stop(int(key))
-                    idling.pop(key)
             for appid in want:
-                if appid not in self.idler.running() and not self.idler.start(appid):
+                if appid in failed:
                     self.log(f"Steam wouldn't start {self._name(appid)}; skipping it for now", "warn")
-                    self.state["skipped"][str(appid)] = time.time() + SKIP_FOR
+                    self.state["skipped"][str(appid)] = now + SKIP_FOR
                     idling.pop(str(appid), None)
-                    continue
-                idling.setdefault(str(appid), {"since": time.time(), "last_drop": time.time(), "restarts": 0})
-        names = [self._name(int(a)) for a in self.state["idling"]]
+                else:
+                    idling.setdefault(str(appid), {"since": now, "clock": now, "last_drop": None, "restarts": 0})
+            names = [self._name(int(a)) for a in idling]
         left = sum(g["drops"] for g in self.state["games"])
-        self.status = f"Farming {', '.join(names)}" if names else (
-            "All cards collected" if not left else "Waiting (games with drops are skipped for now)")
+        if names:
+            self.status = f"Farming {', '.join(names)}" if len(names) <= 2 else f"Farming {len(names)} games"
+        else:
+            self.status = "All cards collected" if not left else "Waiting (games with drops are skipped for now)"
 
     def _check_stalls(self):
         limit = self.settings["stall_minutes"] * 60
         if not limit:
             return
+        restart, give_up = [], []
         with self.lock:
             for appid, info in list(self.state["idling"].items()):
-                if time.time() - info["last_drop"] < limit:
+                if time.time() - info["clock"] < limit:
                     continue
                 if info["restarts"] < 1:
-                    self.log(f"No drop from {self._name(int(appid))} in {limit // 60} min; restarting it", "warn")
-                    self.idler.stop(int(appid))
-                    info.update(restarts=1, last_drop=time.time())
+                    restart.append(appid)
+                    info.update(restarts=1, clock=time.time())
                 else:
-                    self.log(f"{self._name(int(appid))} still isn't dropping; trying other games for 12 h", "warn")
-                    self.idler.stop(int(appid))
+                    give_up.append(appid)
                     self.state["idling"].pop(appid)
-                    self.state["skipped"][str(appid)] = time.time() + SKIP_FOR
+                    self.state["skipped"][appid] = time.time() + SKIP_FOR
+        for appid in restart:
+            self.log(f"No drop from {self._name(int(appid))} in {limit // 60} min; restarting it", "warn")
+            self.idler.stop(int(appid))  # _choose_games starts it again
+        for appid in give_up:
+            self.log(f"{self._name(int(appid))} still isn't dropping; trying other games for 12 h", "warn")
+            self.idler.stop(int(appid))
 
     def _price_one_game(self):
         """Fill in card prices for one game per tick, so 'priciest first' learns the order gently."""
@@ -212,19 +293,47 @@ class Farm:
     # --- drops ---------------------------------------------------------------------------------
     def _check_inventory(self):
         cards = steam.cards_in_inventory(self.session)
+        ids = {c["assetid"] for c in cards}
         with self.lock:
             seen = set(self.state["seen"])
             first_look = not self.state["baseline"]
             new = [c for c in cards if c["assetid"] not in seen]
-            self.state["seen"] = sorted(seen | {c["assetid"] for c in cards})
-            self.state["baseline"] = True
+            # cards that left (sold, ground, traded) drop out of the lists
+            self.state["review"] = [e for e in self.state["review"] if e["id"] in ids]
+            self.state["kept"] = [a for a in self.state["kept"] if a in ids]
+            if first_look:
+                self.state["seen"], self.state["baseline"] = sorted(ids), True
         if first_look:
             self.log(f"Found {len(cards)} cards already in your inventory; left alone "
-                     "(use 'Review cards I already have' to sort them)")
+                     "(use 'Sort cards I have' to sort them)")
             return
+        if self.state["review"]:
+            self._drop_pending_from_review()
+        handled = set()
         for card in new:
-            self.state["stats"]["drops"] += 1
-            self.handle(card, "drop")
+            with self.lock:
+                owed = self.state["owed"].get(str(card["appid"]), 0)
+            try:
+                self.handle(card, "drop" if owed else "new")
+            except Exception as e:  # stays unseen, so the next check tries again
+                self.log(f"Couldn't price {card['name']} ({card['game']}): {e}", "warn")
+                continue
+            handled.add(card["assetid"])
+            with self.lock:
+                if owed:
+                    self.state["owed"][str(card["appid"])] = owed - 1
+                    self.state["stats"]["drops"] += 1
+        with self.lock:
+            self.state["seen"] = sorted((seen & ids) | handled)
+
+    def _drop_pending_from_review(self):
+        """Cards listed elsewhere and waiting for the phone can't be listed again."""
+        pending = steam.pending_listings(self.session)
+        with self.lock:
+            self.state["review"] = [e for e in self.state["review"] if e["id"] not in pending]
+            items = self.state["items"]
+            items["review"] = [e for e in items["review"] if e["id"] not in pending]
+        return pending
 
     def evaluate(self, card):
         lowest = self.prices.game_cards(card["appid"]).get(card["hash"])
@@ -236,7 +345,8 @@ class Farm:
         return action, detail
 
     def handle(self, card, why):
-        """why: 'drop' follows the settings; 'existing' always goes to review."""
+        """why: 'drop' follows the settings; 'new' (a card that isn't from a drop: a trade, a booster
+        pack, a purchase) and 'existing' go to review at most."""
         action, detail = self.evaluate(card)
         label = f"{card['name']} ({card['game']})"
         # one of the two switched off: the other is still better than leaving the card
@@ -246,90 +356,215 @@ class Farm:
                 and detail["buyer"] >= self.settings["min_sell_cents"]:
             action = "sell"
         mode = self.settings.get(action, "off") if action in ("sell", "gems") else "off"
-        if why == "existing" and mode != "off":
+        if why != "drop" and mode != "off":
             mode = "review"
         if action == "keep" or mode == "off":
-            if why == "drop":
+            if why != "existing":
                 self.log(f"New card: {label}; kept ({detail.get('why') or f'{action} is off'})")
             return
-        entry = {"id": card["assetid"], "card": card, "action": action, "detail": detail, "at": time.time()}
+        entry = {"id": card["assetid"], "kind": "card", "card": card, "action": action, "detail": detail,
+                 "at": time.time()}
         if mode == "auto":
             self.log(f"New card: {label}")
-            self.jobs.put((action, entry))
-        else:
-            with self.lock:
-                if not any(e["id"] == entry["id"] for e in self.state["review"]):
-                    self.state["review"].append(entry)
-            if why == "drop":
-                self.log(f"New card: {label}; waiting for your review")
+            self._enqueue(action, entry)
+            return
+        with self.lock:
+            if not any(e["id"] == entry["id"] for e in self.state["review"]):
+                self.state["review"].append(entry)
+        if why == "drop":
+            self.log(f"New card: {label}; waiting for your review")
+        elif why == "new":
+            self.log(f"New card: {label}, not from a card drop (a trade, booster pack or purchase?); "
+                     "waiting for your review")
 
     def review_existing(self):
         """Run every card already in the inventory through the rules, into the review list."""
-        threading.Thread(target=self._review_existing, daemon=True).start()
+        self._in_background("cards", self._review_existing)
+
+    def _in_background(self, job, fn):
+        with self.lock:
+            if job in self.busy:
+                return
+            self.busy.add(job)
+
+        def go():
+            try:
+                fn()
+            finally:
+                with self.lock:
+                    self.busy.discard(job)
+        threading.Thread(target=go, daemon=True).start()
+
+    def _queued_ids(self):
+        with self.lock:
+            return ({e["id"] for e in self.state["review"]} | {e["id"] for e in self.state["items"]["review"]}
+                    | {j["entry"]["id"] for j in self.state["queue"]} | set(self.state["kept"]))
 
     def _review_existing(self):
-        self.working += 1
         try:
-            queued = {e["id"] for e in self.state["review"]}
-            cards = [c for c in steam.cards_in_inventory(self.session) if c["assetid"] not in queued]
+            pending = self._drop_pending_from_review()
+            skip = self._queued_ids() | pending
+            cards = [c for c in steam.cards_in_inventory(self.session) if c["assetid"] not in skip]
             self.log(f"Pricing {len(cards)} cards you already have…")
             for c in cards:
                 self.handle(c, "existing")
             self.log(f"Review list ready: {len(self.state['review'])} cards")
         except Exception as e:
             self.log(f"Couldn't review your cards: {e}", "warn")
-        finally:
-            self.working -= 1
 
-    def decide_review(self, ids, action):
-        """The person's call on queued cards: sell / gems / keep / suggested."""
+    def decide_review(self, ids, action, items=False):
+        """The person's call on queued cards (sell / gems / keep / suggested) or items (sell / keep /
+        always: keep this and every other one of its kind)."""
         with self.lock:
-            picked = [e for e in self.state["review"] if e["id"] in ids or ids == "all"]
-            self.state["review"] = [e for e in self.state["review"] if e not in picked]
-        for e in picked:
-            act = e["action"] if action == "suggested" else action
-            if act == "keep":
+            box = self.state["items"] if items else self.state
+            picked = [e for e in box["review"] if ids == "all" or e["id"] in ids]
+            box["review"] = [e for e in box["review"] if e not in picked]
+            for e in picked:
+                act = e["action"] if action == "suggested" else action
+                if act == "always":
+                    names = set(self.settings["items_keep"]) | {e["item"]["hash"]}
+                    self.settings["items_keep"] = sorted(names)
+                    box["review"] = [x for x in box["review"] if x["item"]["hash"] not in names]
+                if act in ("keep", "always"):
+                    self.state["kept"].append(e["id"])
+                elif act in ("sell", "gems"):
+                    self._enqueue(act, e)
+        if action == "always":
+            self.update_settings({"items_keep": self.settings["items_keep"]})
+        self.save()
+
+    # --- other items ----------------------------------------------------------------------------
+    def check_items(self):
+        """The page's 'Check items': find the inventories and price what's in the chosen ones."""
+        self._in_background("items", lambda: self._check_items(manual=True))
+
+    def _check_items(self, manual):
+        """manual: every sellable item in the chosen inventories goes to review. On the timer
+        (items_new on), only items that weren't there last time count, and 'auto' lists them."""
+        try:
+            found = steam.inventories(self.session)
+            chosen = [i for i in found if i["key"] in self.settings["items_inventories"]]
+            with self.lock:
+                self.state["items"]["inventories"] = found
+            if not chosen:
+                if manual:
+                    self.log("Found your inventories; pick which ones Card Farm may sell from")
+                return
+            pending = self._drop_pending_from_review()
+            skip = self._queued_ids() | pending
+            offered = held = 0
+            for inv in chosen:
+                stock = steam.items_in_inventory(self.session, inv["appid"], inv["context"], inv["name"])
+                ids = {i["assetid"] for i in stock}
                 with self.lock:
-                    self.state["seen"].append(e["id"])
-                continue
-            self.jobs.put((act, e))
+                    seen = self.state["items"]["seen"]
+                    before = set(seen[inv["key"]]) if inv["key"] in seen else None
+                    seen[inv["key"]] = sorted(ids)
+                    box = self.state["items"]
+                    box["review"] = [e for e in box["review"]
+                                     if e["item"]["context"] != inv["context"] or e["item"]["appid"] != inv["appid"]
+                                     or e["id"] in ids]
+                for item in stock:
+                    new = before is not None and item["assetid"] not in before
+                    if item["assetid"] in skip or not (manual or new):
+                        continue
+                    try:
+                        action, detail = rules.decide_item(item, self.prices.item(item["appid"], item["hash"]),
+                                                           self.settings)
+                    except Exception as e:
+                        self.log(f"Couldn't price {item['name']}: {e}", "warn")
+                        continue
+                    if action == "keep":
+                        held += 1
+                        continue
+                    entry = {"id": item["assetid"], "kind": "item", "item": item, "action": "sell",
+                             "detail": detail, "at": time.time()}
+                    if new and not manual and self.settings["items_new"] == "auto":
+                        self.log(f"New item: {item['name']} ({inv['name']})")
+                        self._enqueue("sell", entry)
+                    else:
+                        with self.lock:
+                            if not any(e["id"] == entry["id"] for e in box["review"]):
+                                box["review"].append(entry)
+                        offered += 1
+            with self.lock:
+                self.state["items"]["checked"] = time.time()
+            if manual or offered:
+                self.log(f"Items checked: {offered} to review"
+                         + (f", {held} left alone (nobody selling, under your minimum or kept)" if held else ""))
+        except Exception as e:
+            self.log(f"Couldn't check your items: {e}", "warn")
 
     # --- doing it ---------------------------------------------------------------------------------
+    def _enqueue(self, action, entry):
+        with self.lock:
+            self.state["queue"].append({"action": action, "entry": entry})
+        self._jobs.set()
+
     def _worker(self):
+        """Works through the queue one job at a time, paced for Steam. A job leaves the queue once
+        done (or failed), so a restart picks up where it stopped."""
         listed = 0
         while True:
-            try:
-                action, e = self.jobs.get(timeout=20)
-            except queue.Empty:
+            with self.lock:
+                job = self.state["queue"][0] if self.state["queue"] and self.session.signed_in else None
+            if not job:
                 if listed and self.settings["notify"]:
-                    _notify(f"{listed} card listing{'s' * (listed > 1)} waiting",
-                            "Confirm them in the Steam mobile app (Confirmations).")
+                    self.notify(f"{listed} listing{'s' * (listed > 1)} to confirm",
+                                "Confirm them in the Steam mobile app (Confirmations).")
                 listed = 0
+                self._jobs.wait(20)
+                self._jobs.clear()
                 continue
-            self.working += 1
+            e = job["entry"]
+            what = e["card"]["name"] if e["kind"] == "card" else e["item"]["name"]
             try:
-                listed += self._do(action, e)
+                listed += self._do(job["action"], e)
             except Exception as err:
-                self.log(f"Couldn't {action} {e['card']['name']}: {err}", "warn")
-            finally:
-                self.working -= 1
-                time.sleep(1.5)
+                if steam.ALREADY_LISTED in str(err):
+                    self.log(f"{what} is already listed and waits for your OK in the Steam app")
+                    listed += 1
+                else:
+                    self.log(f"Couldn't {job['action']} {what}: {err}", "warn")
+            with self.lock:
+                if job in self.state["queue"]:
+                    self.state["queue"].remove(job)
+            self.save()
+            time.sleep(1.5)
 
     def _do(self, action, e):
-        card, d = e["card"], e["detail"]
+        """Prices are looked up again here (from the few-hours cache), so a card that waited days
+        for review isn't listed at an old price."""
+        if e["kind"] == "item":
+            it = e["item"]
+            buyer = rules.asking_price(self.prices.item(it["appid"], it["hash"]), self.settings)
+            if not buyer:
+                raise RuntimeError("nobody is selling one now, so there's no price to match")
+            receive = rules.received(buyer)
+            steam.sell(self.session, it["assetid"], receive, it["appid"], it["context"], it["amount"])
+            with self.lock:
+                self.state["stats"]["items_listed"] += 1
+                self.state["stats"]["items_cents"] += receive * it["amount"]
+            count, each = (f" ×{it['amount']}", " each") if it["amount"] > 1 else ("", "")
+            self.log(f"Listed {it['name']}{count} for ${rules.buyer_pays(receive) / 100:.2f}{each} "
+                     f"(you get ${receive / 100:.2f}{each})", "sell")
+            return 1
+        card = e["card"]
         label = f"{card['name']} ({card['game']})"
         if action == "sell":
-            buyer = d.get("buyer")
+            buyer = rules.asking_price(self.prices.game_cards(card["appid"]).get(card["hash"]), self.settings)
             if not buyer:
-                raise RuntimeError("nobody is selling it, so there's no price to match")
+                raise RuntimeError("nobody is selling it now, so there's no price to match")
             receive = rules.received(buyer)
             steam.sell(self.session, card["assetid"], receive)
             with self.lock:
                 self.state["stats"]["listed"] += 1
                 self.state["stats"]["listed_cents"] += receive
-            self.log(f"Listed {label} for ${buyer / 100:.2f} (you get ${receive / 100:.2f})", "sell")
+            self.log(f"Listed {label} for ${rules.buyer_pays(receive) / 100:.2f} (you get ${receive / 100:.2f})", "sell")
             return 1
-        gems = steam.grind(self.session, card["appid"], card["assetid"], d["gems"])
+        item_type = card["goo"][1] if card.get("goo") else None
+        expected = self.prices.gems(card["appid"], item_type, card["foil"]) or e["detail"]["gems"]
+        gems = steam.grind(self.session, card["appid"], card["assetid"], expected)
         with self.lock:
             self.state["stats"]["gems"] += gems
         self.log(f"Turned {label} into {gems} gems", "gems")
@@ -340,20 +575,33 @@ class Farm:
         with self.lock:
             st = self.state
             now = time.time()
+            keep = set(self.settings["never_touch"])
+            names = {g["appid"]: g["name"] for g in st["games"]}
             return {
                 "signed_in": self.session.signed_in, "account": self.session.account,
-                "qr": self.session.qr and self.session.qr["url"],
-                "status": self.status, "error": self.error, "working": self.working + self.jobs.qsize(),
+                "qr_svg": self._qr(), "signin_error": self.signin_error,
+                "status": self.status, "error": self.error, "working": len(st["queue"]),
+                "busy": sorted(self.busy),
                 "settings": self.settings,
                 "idling": [{"appid": int(a), "name": self._name(int(a)), "since": i["since"],
-                            "last_drop": i["last_drop"]} for a, i in st["idling"].items()],
-                "games": [dict(g, value=self._game_value(g["appid"]),
+                            "last_drop": i.get("last_drop")} for a, i in st["idling"].items()],
+                "games": [dict(g, value=self._game_value(g["appid"]), keep=g["appid"] in keep,
                                skipped=st["skipped"].get(str(g["appid"]), 0) > now)
-                          for g in self._candidates()] if self.session.signed_in else [],
+                          for g in self._candidates(with_skipped=True)] if self.session.signed_in else [],
+                "kept_games": [{"appid": a, "name": names.get(a, str(a))} for a in sorted(keep)],
                 "drops_left": sum(g["drops"] for g in st["games"]),
                 "review": st["review"], "history": st["history"][:80], "stats": st["stats"],
+                "items": {"inventories": [dict(i, on=i["key"] in self.settings["items_inventories"])
+                                          for i in st["items"]["inventories"]],
+                          "review": st["items"]["review"], "checked": st["items"]["checked"]},
                 "ui": int(os.path.getmtime(os.path.join(os.path.dirname(__file__), "ui", "index.html"))),
             }
+
+    def _qr(self):
+        url = self.session.qr and self.session.qr["url"]
+        if url and self._qr_svg[0] != url:
+            self._qr_svg = (url, qr.svg(url))
+        return self._qr_svg[1] if url else None
 
     def unskip(self, appid):
         with self.lock:
@@ -367,7 +615,8 @@ class Farm:
 
 
 def _notify(title, body):
+    """Fallback when there's no window app to send notifications through."""
     try:
-        subprocess.run(["notify-send", "-a", "Card Farm", "-i", "steam", title, body], timeout=10)
+        subprocess.run(["notify-send", "-a", "Card Farm", title, body], timeout=10)
     except Exception:
         pass

@@ -1,14 +1,17 @@
-"""What Card Farm asks of Steam: badges (drops left), inventory, market prices, gem values, and the
-two actions (list on the market, turn into gems)."""
+"""What Card Farm asks of Steam: badges (drops left), inventories, market prices, gem values, and
+the two actions (list on the market, turn into gems)."""
 import html
 import json
+import os
 import re
+import threading
 import time
 import urllib.parse
 
 from .http import HttpError, get_json, post_json, request
 
 COMMUNITY = "https://steamcommunity.com"
+CARDS = (753, 6)  # the Steam inventory's Community context, where cards live
 
 
 # --- badges -------------------------------------------------------------------------------
@@ -53,14 +56,14 @@ def badges(session):
     return out
 
 
-# --- inventory ------------------------------------------------------------------------------
+# --- inventories ----------------------------------------------------------------------------
 def tags(desc):
     return {t["category"]: t for t in desc.get("tags", [])}
 
 
-def cards_in_inventory(session):
-    """Every marketable trading card: [{assetid, appid, name, game, hash, foil, item_type?}]"""
-    url = f"{COMMUNITY}/inventory/{session.steamid}/753/6?l=english&count=2000"
+def _inventory(session, appid, context):
+    """[(asset, description)] for one inventory, every page of it."""
+    url = f"{COMMUNITY}/inventory/{session.steamid}/{appid}/{context}?l=english&count=2000"
     assets, descs, start = [], {}, None
     while True:
         d = get_json(url + (f"&start_assetid={start}" if start else ""), cookies=session.cookies())
@@ -71,14 +74,20 @@ def cards_in_inventory(session):
             break
         start = d.get("last_assetid")
         time.sleep(2)
+    return [(a, descs[(a["classid"], a["instanceid"])]) for a in assets if (a["classid"], a["instanceid"]) in descs]
+
+
+def _is_card(desc):
+    return tags(desc).get("item_class", {}).get("internal_name") == "item_class_2"
+
+
+def cards_in_inventory(session):
+    """Every trading card: [{assetid, appid, name, game, hash, foil, marketable, icon, goo}]"""
     out = []
-    for a in assets:
-        x = descs.get((a["classid"], a["instanceid"]))
-        if not x:
+    for a, x in _inventory(session, *CARDS):
+        if not _is_card(x):
             continue
         t = tags(x)
-        if t.get("item_class", {}).get("internal_name") != "item_class_2":
-            continue
         goo = None  # the inventory tells its owner the exact gem lookup for each item
         for act in x.get("owner_actions", []):
             m = re.search(r"GetGooValue\(\s*'[^']*',\s*'[^']*',\s*(\d+),\s*(\d+),\s*(\d+)", act.get("link", ""))
@@ -92,29 +101,83 @@ def cards_in_inventory(session):
     return out
 
 
+def inventories(session):
+    """Every inventory on the account that has something in it:
+    [{"key": "730/2", "appid", "context", "name", "count"}], biggest first."""
+    status, page = request(f"{COMMUNITY}/profiles/{session.steamid}/inventory/?l=english", cookies=session.cookies())
+    m = re.search(r"g_rgAppContextData\s*=\s*(\{.*?\});\s*$", page, re.M)
+    if status != 200 or not m:
+        raise RuntimeError("Steam didn't show the list of your inventories")
+    out = []
+    for app in json.loads(m[1]).values():
+        contexts = app.get("rgContexts") or {}
+        contexts = list(contexts.values()) if isinstance(contexts, dict) else contexts
+        for ctx in contexts:
+            if ctx.get("asset_count"):
+                name = app["name"] if len(contexts) == 1 else f"{app['name']} · {ctx['name']}"
+                out.append({"key": f"{app['appid']}/{ctx['id']}", "appid": int(app["appid"]),
+                            "context": int(ctx["id"]), "name": name, "count": ctx["asset_count"]})
+    return sorted(out, key=lambda i: -i["count"])
+
+
+def items_in_inventory(session, appid, context, name=""):
+    """Everything in one inventory that can go on the market now, cards aside (Card Farm handles
+    those). Stacks (e.g. gems) come as one entry with their amount."""
+    out = []
+    for a, x in _inventory(session, appid, context):
+        if not x.get("marketable") or ((appid, context) == CARDS and _is_card(x)):
+            continue
+        out.append({"assetid": a["assetid"], "appid": appid, "context": context, "amount": int(a.get("amount") or 1),
+                    "name": x.get("market_name") or x["name"], "hash": x["market_hash_name"],
+                    "game": name, "icon": x.get("icon_url", ""),
+                    "kind": tags(x).get("Type", {}).get("localized_tag_name", "")})
+    return out
+
+
+def pending_listings(session):
+    """Asset ids listed on the market but still waiting for confirmation in the Steam app. They stay
+    in the inventory until confirmed, and Steam refuses to list them a second time."""
+    d = get_json(f"{COMMUNITY}/market/mylistings/render/?query=&start=0&count=10&norender=1", cookies=session.cookies())
+    if not d.get("success"):
+        raise RuntimeError("Steam didn't show your market listings")
+    return {str(listing["asset"]["id"]) for listing in d.get("listings_to_confirm") or [] if listing.get("asset")}
+
+
 # --- prices -------------------------------------------------------------------------------------
 class Prices:
-    """Lowest asking price per card (by market hash name) and gem values, cached for a few hours."""
+    """Lowest asking prices (by market hash name) and gem values, cached for a few hours. One fetch
+    at a time, whichever part of Card Farm asks, to stay gentle with the market."""
     TTL = 6 * 3600
 
     def __init__(self, path):
         self.path = path
+        self.lock = threading.RLock()
         try:
             self.cache = json.load(open(path))
         except (OSError, ValueError):
             self.cache = {}
 
     def _save(self):
-        json.dump(self.cache, open(self.path, "w"))
+        tmp = self.path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(dict(self.cache), f)
+        os.replace(tmp, self.path)
 
     def _fresh(self, key):
         hit = self.cache.get(key)
         return hit if hit and time.time() - hit["at"] < self.TTL else None
 
+    def _remember(self, key, value):
+        self.cache[key] = {"at": time.time(), "v": value}
+        self._save()
+        return value
+
     def game_cards(self, appid):
         """{hash name: lowest price in cents} for every card of a game (normal and foil)."""
         key = f"cards:{appid}"
-        if not self._fresh(key):
+        with self.lock:
+            if self._fresh(key):
+                return self.cache[key]["v"]
             prices, start, total = {}, 0, 1
             while start < total:  # pages are 10 long whatever count asks for
                 q = urllib.parse.urlencode({"appid": 753, "norender": 1, "start": start, "count": 10,
@@ -125,15 +188,26 @@ class Prices:
                     prices[it["hash_name"]] = it["sell_price"]
                 total, start = d.get("total_count", 0), start + 10
                 time.sleep(4)
-            self.cache[key] = {"at": time.time(), "v": prices}
-            self._save()
-        return self.cache[key]["v"]
+            return self._remember(key, prices)
+
+    def item(self, appid, hash_name):
+        """Lowest asking price in cents for any market item, or None when nobody sells it."""
+        key = f"item:{appid}:{hash_name}"
+        with self.lock:
+            if self._fresh(key):
+                return self.cache[key]["v"]
+            q = urllib.parse.urlencode({"appid": appid, "currency": 1, "market_hash_name": hash_name})
+            d = _patient(lambda: get_json(f"{COMMUNITY}/market/priceoverview/?{q}"))
+            time.sleep(3)
+            return self._remember(key, _cents(d.get("lowest_price")))
 
     def gems(self, appid, item_type=None, foil=False):
         """Gems for one card. Without the inventory's exact item type, the cheapest item of the
         game's set is its card (backgrounds and emoticons are worth more)."""
         key = f"gems:{appid}:{item_type}:{int(foil)}"
-        if not self._fresh(key):
+        with self.lock:
+            if self._fresh(key):
+                return self.cache[key]["v"]
             types = [item_type] if item_type is not None else range(1, 25)
             vals = []
             for t in types:
@@ -142,18 +216,21 @@ class Prices:
                 if int(d.get("goo_value") or 0):
                     vals.append(int(d["goo_value"]))
                 time.sleep(0.25)
-            self.cache[key] = {"at": time.time(), "v": min(vals) if vals else 0}
-            self._save()
-        return self.cache[key]["v"]
+            return self._remember(key, min(vals) if vals else 0)
 
     def gem_sack(self):
         """Cents a 1,000-gem sack sells for."""
-        if not self._fresh("sack"):
+        with self.lock:
+            if self._fresh("sack"):
+                return self.cache["sack"]["v"]
             d = _patient(lambda: get_json(f"{COMMUNITY}/market/priceoverview/?appid=753&currency=1"
                                           "&market_hash_name=753-Sack%20of%20Gems"))
-            self.cache["sack"] = {"at": time.time(), "v": round(float(d["lowest_price"].strip("$").replace(",", "")) * 100)}
-            self._save()
-        return self.cache["sack"]["v"]
+            return self._remember("sack", _cents(d["lowest_price"]))
+
+
+def _cents(text):
+    """'$1,234.56' -> 123456; None stays None."""
+    return round(float(text.strip("$ ").replace(",", "")) * 100) if text else None
 
 
 def _patient(call, tries=6):
@@ -167,11 +244,14 @@ def _patient(call, tries=6):
 
 
 # --- actions ---------------------------------------------------------------------------------------
-def sell(session, assetid, receive_cents):
-    """List one card; Steam then wants a confirmation in the mobile app."""
+ALREADY_LISTED = "pending confirmation"  # in Steam's refusal when a listing already waits for the app
+
+
+def sell(session, assetid, receive_cents, appid=753, context=6, amount=1):
+    """List an item (receive_cents each); Steam then wants a confirmation in the mobile app."""
     r = post_json(f"{COMMUNITY}/market/sellitem/",
-                  {"sessionid": session.sessionid, "appid": 753, "contextid": 6, "assetid": assetid,
-                   "amount": 1, "price": receive_cents}, cookies=session.cookies(),
+                  {"sessionid": session.sessionid, "appid": appid, "contextid": context, "assetid": assetid,
+                   "amount": amount, "price": receive_cents}, cookies=session.cookies(),
                   headers={"Referer": f"{COMMUNITY}/profiles/{session.steamid}/inventory/",
                            "Origin": COMMUNITY})
     if not r.get("success"):

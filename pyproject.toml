@@ -18,4 +18,4 @@ card-farm = "cardfarm.__main__:main"
 packages = ["cardfarm"]
 
 [tool.setuptools.package-data]
-cardfarm = ["ui/*.html"]
+cardfarm = ["ui/*.html", "ui/*.svg"]

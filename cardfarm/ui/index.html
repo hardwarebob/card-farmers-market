@@ -24,6 +24,7 @@
   --signal: #f59f00; --signal-ink: #120f08; --sell: #69c27e; --gems: #a98af2; --warn: #ff7b6e;
 }
 * { box-sizing: border-box; border-radius: 0; }
+[hidden] { display: none !important; }
 html, body { margin: 0; background: var(--paper); color: var(--ink); }
 body { font: 14px/1.45 var(--body); }
 main { max-width: 1180px; margin: 0 auto; padding: 0 20px 64px; }
@@ -31,19 +32,21 @@ main { max-width: 1180px; margin: 0 auto; padding: 0 20px 64px; }
 .faint { color: var(--faint); }
 .small { font-size: 12px; }
 
-/* masthead + ticker */
-.mast { display: flex; align-items: baseline; gap: 16px; padding: 18px 0 10px; border-bottom: 3px double var(--ink); flex-wrap: wrap; }
-.mast h1 { font: 800 30px/1 var(--head); letter-spacing: .02em; text-transform: uppercase; margin: 0; font-stretch: condensed; }
-.mast h1 span { color: var(--signal); }
-.mast .who { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--faint); }
-.in-app .mast h1 { display: none; }
-.in-app .mast .who { margin-left: 0; }
-.in-app .mast .spacer { flex: 1; }
+/* masthead: tabs on the left, account on the right */
+.mast { display: flex; align-items: flex-end; gap: 16px; padding: 14px 0 0; border-bottom: 3px double var(--ink); flex-wrap: wrap; }
+.mast .who { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--faint); padding-bottom: 8px; }
+.mast .link { margin-bottom: 6px; }
+.tabs { display: flex; }
+.tabs button { font: 800 17px/1 var(--head); font-stretch: condensed; letter-spacing: .05em; padding: 9px 16px 8px;
+  border: 1px solid var(--ink); border-bottom: 0; margin-right: -1px; color: var(--faint); }
+.tabs button.on { background: var(--ink); color: var(--paper); }
+.tabs button .count { font: 600 11px/1 var(--mono); color: var(--signal); margin-left: 6px; letter-spacing: 0; }
+.tabs button.on .count { color: var(--signal); }
 .ticker { display: flex; align-items: stretch; background: var(--ink); color: var(--paper); margin: 14px 0 0;
   font: 600 13px/1 var(--mono); overflow: hidden; }
 .ticker .label { background: var(--signal); color: var(--signal-ink); padding: 9px 12px; letter-spacing: .12em; white-space: nowrap; }
 .ticker .text { padding: 9px 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
-.ticker.paused .label { background: var(--faint); }
+.ticker.paused .label { background: var(--faint); color: var(--paper); }
 .alert { margin-top: 8px; padding: 8px 12px; border-left: 4px solid var(--warn); color: var(--warn); background: var(--sheet); font-size: 13px; }
 
 /* section heads */
@@ -62,7 +65,7 @@ button.go { background: var(--signal); border-color: var(--signal); color: var(-
 button.go:hover:not(:disabled) { background: var(--ink); border-color: var(--ink); color: var(--paper); }
 button:disabled { opacity: .35; cursor: default; }
 button.link { border: 0; padding: 2px 0; text-decoration: underline; text-underline-offset: 3px; }
-button.link:hover { background: none; color: var(--signal); }
+button.link:hover:not(:disabled) { background: none; color: var(--signal); }
 
 /* figures row */
 .figures { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--rule); }
@@ -74,6 +77,7 @@ button.link:hover { background: none; color: var(--signal); }
   .figures { grid-template-columns: repeat(2, 1fr); }
   .figures div:nth-child(3) { border-left: 0; padding-left: 0; }
   .figures div:nth-child(n+3) { border-top: 1px solid var(--rule); }
+  .figures b { font-size: 24px; }
 }
 .now { font-family: var(--mono); font-size: 12px; color: var(--faint); padding-top: 8px; }
 
@@ -84,7 +88,8 @@ button.link:hover { background: none; color: var(--signal); }
   border-bottom: 1px dotted var(--rule); min-height: 44px; }
 .line > span:first-child { font-size: 13px; }
 .line small { display: block; color: var(--faint); font-size: 11px; }
-.pick { display: inline-flex; font: 600 11px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.line.wide { grid-column: 1 / -1; align-items: flex-start; }
+.pick { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; font: 600 11px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
 .pick button { border: 0; padding: 6px 7px; font-size: 11px; color: var(--faint); }
 .pick button.on { color: var(--paper); background: var(--ink); }
 .pick button:not(.on):hover { background: none; color: var(--ink); text-decoration: underline; }
@@ -94,22 +99,34 @@ input[type=number] { font: 600 12px/1 var(--mono); color: var(--ink); background
   border-bottom: 1px solid var(--ink); padding: 5px 2px; width: 64px; text-align: right; }
 input:focus, button:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
 
+/* name lists with a remove mark, and inventory switches */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; max-width: 70%; }
+.chips .none { font-size: 12px; color: var(--faint); font-style: italic; }
+.chip { font: 600 11px/1 var(--mono); letter-spacing: .04em; text-transform: none; padding: 5px 7px; color: var(--faint); border-color: var(--rule); }
+.chip b { font-weight: 600; color: var(--ink); }
+.chip.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.chip.on b { color: var(--paper); }
+.chip .x { margin-left: 6px; color: var(--signal); }
+
 /* ledgers (tables) */
 table { width: 100%; border-collapse: collapse; }
 th { font: 600 11px/1 var(--mono); text-transform: uppercase; letter-spacing: .1em; color: var(--faint);
-  text-align: left; padding: 9px 8px 7px 0; border-bottom: 1px solid var(--ink); }
+  text-align: left; padding: 9px 8px 7px 0; border-bottom: 1px solid var(--ink); white-space: nowrap; }
 td { padding: 7px 8px 7px 0; border-bottom: 1px solid var(--rule); vertical-align: middle; }
-th.r, td.r { text-align: right; }
+th.r, td.r { text-align: right; padding-left: 12px; }
 tbody tr:hover td { background: var(--sheet); }
+tr.dim td { color: var(--faint); }
 .scroll { max-height: 460px; overflow: auto; }
 .art { width: 34px; height: 40px; object-fit: cover; display: block; border: 1px solid var(--rule); }
+.art.wide { width: 52px; height: 40px; object-fit: contain; background: var(--sheet); }
 .cardname b { font-weight: 600; }
 .cardname .faint { display: block; font-size: 12px; }
 .verdict { font: 700 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
 .verdict.sell { color: var(--sell); } .verdict.gems { color: var(--gems); }
-.foil { font: 700 10px/1 var(--mono); color: var(--signal); letter-spacing: .1em; margin-left: 6px; }
+.foil, .tag { font: 700 10px/1 var(--mono); color: var(--signal); letter-spacing: .1em; margin-left: 6px; text-transform: uppercase; }
 td.acts { white-space: nowrap; text-align: right; }
 td.acts button { padding: 5px 7px; font-size: 11px; margin-left: 2px; }
+td.acts button.link { padding: 2px 0; margin-left: 10px; }
 .empty { padding: 18px 0; color: var(--faint); font-style: italic; border-bottom: 1px solid var(--rule); }
 @media (max-width: 620px) { .hide-sm { display: none; } }
 
@@ -131,16 +148,18 @@ td.acts button { padding: 5px 7px; font-size: 11px; margin-left: 2px; }
 .gate ol { margin: 16px 0; padding-left: 20px; }
 .gate li { margin: 4px 0; }
 .gate .qr { display: grid; grid-template-columns: 220px 1fr; gap: 20px; align-items: center; margin: 18px 0; }
+.gate .alert { margin: 0 0 14px; }
 @media (max-width: 520px) { .gate .qr { grid-template-columns: 1fr; } }
 #qr { background: #fff; padding: 6px; border: 1px solid var(--ink); line-height: 0; width: 220px; }
-#qr img { width: 100%; height: auto; }
+#qr svg { width: 100%; height: auto; display: block; }
 </style>
 </head>
 <body>
 <main>
   <div class="mast">
-    <h1>Card<span>/</span>Farm</h1>
-    <span class="spacer"></span>
+    <div class="tabs" id="tabs" hidden>
+      <button data-tab="cards">Cards<span class="count" id="tab-cards"></span></button><button data-tab="items">Items<span class="count" id="tab-items"></span></button>
+    </div>
     <span class="who" id="who"></span>
     <button id="signout" class="link" hidden>Sign out</button>
   </div>
@@ -148,6 +167,7 @@ td.acts button { padding: 5px 7px; font-size: 11px; margin-left: 2px; }
   <div id="signin" class="gate" hidden>
     <h2>Sign in through the Steam app</h2>
     <p class="faint">Card Farm signs in the same way the Steam website does, with a QR code. It never sees your password.</p>
+    <div class="alert" id="signin-error" hidden></div>
     <div class="qr" id="qrbox" hidden>
       <div id="qr"></div>
       <ol>
@@ -163,6 +183,7 @@ td.acts button { padding: 5px 7px; font-size: 11px; margin-left: 2px; }
     <div class="ticker" id="ticker"><span class="label" id="ticker-label">NOW</span><span class="text" id="status">…</span></div>
     <div class="alert" id="error" hidden></div>
 
+    <div id="tab-panel-cards">
     <section>
       <div class="figures">
         <div><b id="s-left">–</b><span>Drops left</span></div>
@@ -190,10 +211,10 @@ td.acts button { padding: 5px 7px; font-size: 11px; margin-left: 2px; }
         </table>
       </div>
       <p class="note">Listings go live once you confirm them in the Steam mobile app (Confirmations → Confirm all).
-        Gems can't be turned back into cards.</p>
+        Gems can't be turned back into cards. Prices are checked again just before listing.</p>
     </section>
 
-    <section id="settings">
+    <section class="settings">
       <div class="head"><h2><i>02</i>Rules</h2></div>
       <div class="sheet">
         <div>
@@ -215,10 +236,12 @@ td.acts button { padding: 5px 7px; font-size: 11px; margin-left: 2px; }
             <span class="pick" data-key="order"><button data-v="value">Priciest</button><button data-v="most">Most left</button><button data-v="fewest">Nearly done</button></span></div>
           <div class="line"><span>Games at once</span>
             <span class="pick" data-key="games_at_once"><button data-v="1">1</button><button data-v="2">2</button><button data-v="4">4</button><button data-v="8">8</button><button data-v="32">32</button></span></div>
-          <div class="line"><span>Restart a game after<small>minutes without a drop</small></span>
+          <div class="line"><span>Restart a game after<small>minutes without a drop; 0 never</small></span>
             <input type="number" min="0" data-key="stall_minutes"></div>
           <div class="line"><span>Tell me about listings to confirm</span><button class="toggle" data-key="notify"></button></div>
         </div>
+        <div class="line wide"><span>Keep every card from<small>for sets you're crafting; mark games below</small></span>
+          <span class="chips" id="kept-games"></span></div>
       </div>
     </section>
 
@@ -234,33 +257,94 @@ td.acts button { padding: 5px 7px; font-size: 11px; margin-left: 2px; }
       </section>
       <section>
         <div class="head"><h2><i>04</i>Tape</h2></div>
-        <div class="tape" id="log"></div>
+        <div class="tape"></div>
       </section>
+    </div>
+    </div>
+
+    <div id="tab-panel-items" hidden>
+    <section>
+      <div class="figures">
+        <div><b id="i-inv">–</b><span>Inventories on</span></div>
+        <div><b id="i-review">–</b><span>To review</span></div>
+        <div><b id="i-listed">–</b><span>Listed</span></div>
+        <div><b id="i-cents">–</b><span>You get</span></div>
+      </div>
+      <p class="note">Skins, cases, stickers, backgrounds, emoticons and anything else marketable. Card Farm only
+        looks in the inventories you switch on, and only lists an item when you say so, unless "New items" is Auto.</p>
+    </section>
+
+    <section class="settings">
+      <div class="head"><h2><i>01</i>Inventories</h2><div class="tools"><button id="check-items" class="go">Check items</button></div></div>
+      <div class="line wide"><span>Sell from<small id="checked-at">press Check items to find them</small></span>
+        <span class="chips" id="inventories"></span></div>
+      <div class="sheet">
+        <div>
+          <div class="line"><span>New items<small>ones that turn up later</small></span>
+            <span class="pick" data-key="items_new"><button data-v="auto">Auto</button><button data-v="review">Review</button><button data-v="off">Off</button></span></div>
+          <div class="line"><span>Price<small>same as for cards</small></span>
+            <span class="pick" data-key="pricing"><button data-v="match">Match lowest</button><button data-v="undercut">Undercut 1¢</button></span></div>
+        </div>
+        <div>
+          <div class="line"><span>Don't list under<small>cents, what a buyer pays</small></span>
+            <input type="number" min="0" data-key="items_min_cents"></div>
+        </div>
+        <div class="line wide"><span>Never list<small>"Always keep" adds to this</small></span>
+          <span class="chips" id="kept-items"></span></div>
+      </div>
+    </section>
+
+    <div class="split">
+      <section>
+        <div class="head">
+          <h2><i>02</i>Review <span id="items-count" class="faint"></span></h2>
+          <div class="tools"><button id="items-all-sell">Sell all</button></div>
+        </div>
+        <div class="scroll">
+          <table>
+            <thead id="items-head"><tr><th></th><th>Item</th><th class="r">Asks</th><th class="r hide-sm">You get</th><th></th></tr></thead>
+            <tbody id="items"></tbody>
+          </table>
+        </div>
+        <p class="note">Each listing waits for your OK in the Steam mobile app. Items you just got may not be
+          marketable for a few days; they turn up once they are.</p>
+      </section>
+      <section>
+        <div class="head"><h2><i>03</i>Tape</h2></div>
+        <div class="tape"></div>
+      </section>
+    </div>
     </div>
   </div>
 </main>
 
 <script>
-if (new URLSearchParams(location.search).has("app")) document.documentElement.classList.add("in-app");
 const $ = s => document.querySelector(s);
 const money = c => c == null ? "–" : "$" + (c / 100).toFixed(2);
 const ago = t => { const m = Math.round((Date.now() / 1000 - t) / 60);
   return m < 1 ? "just now" : m < 60 ? m + " min" : Math.floor(m / 60) + " h " + (m % 60) + " min"; };
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const art = (icon, wide) => icon ? `<img class="art${wide ? " wide" : ""}" src="https://community.akamai.steamstatic.com/economy/image/${esc(icon)}/62fx62f" alt="" loading="lazy">` : "";
 const MARK = {sell: "+", gems: "◆", warn: "!", info: "·"};
-let state = null, qrShown = null;
+let state = null, qrShown = null, uiVersion = null;
+let tab = "cards";
+try { tab = localStorage.getItem("tab") === "items" ? "items" : "cards"; } catch {}
 
 async function post(path, body) {
-  const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json", "X-Card-Farm": "1"},
-    body: JSON.stringify(body || {})});
+  const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
   const j = await r.json().catch(() => ({}));
   if (!r.ok) alert(j.error || "Something went wrong");
   load();
   return j;
 }
 
+// replace a box's contents only when they change, so hover, scrolling and selections survive the refresh
+function fill(el, html) {
+  if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
+}
+
 function renderSettings(s) {
-  document.querySelectorAll("#settings [data-key]").forEach(el => {
+  document.querySelectorAll(".settings [data-key]").forEach(el => {
     const k = el.dataset.key, v = s[k];
     if (el.classList.contains("toggle")) { el.classList.toggle("on", !!v); el.textContent = v ? "On" : "Off"; }
     else if (el.classList.contains("pick")) el.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.v === String(v)));
@@ -268,106 +352,168 @@ function renderSettings(s) {
   });
 }
 
+function renderTabs() {
+  $("#tabs").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
+  $("#tab-panel-cards").hidden = tab !== "cards";
+  $("#tab-panel-items").hidden = tab !== "items";
+}
+
 function renderReview(list) {
   $("#review-count").textContent = list.length ? `(${list.length})` : "";
+  $("#tab-cards").textContent = list.length || "";
   ["#do-suggested", "#all-sell", "#all-gems"].forEach(b => $(b).disabled = !list.length);
   $("#review-head").hidden = !list.length;
-  const box = $("#review");
-  const keys = list.map(e => e.id + e.action).join();
-  if (box.dataset.keys === keys) return;
-  box.dataset.keys = keys;
-  if (!list.length) {
-    box.innerHTML = `<tr><td colspan="7" class="empty">Nothing waiting. Cards land here when a rule says Review.</td></tr>`;
-    return;
-  }
-  box.innerHTML = list.map(e => {
+  fill($("#review"), !list.length ? `<tr><td colspan="7" class="empty">Nothing waiting. Cards land here when a rule says Review.</td></tr>`
+    : list.map(e => {
     const c = e.card, d = e.detail;
-    const img = c.icon ? `https://community.akamai.steamstatic.com/economy/image/${c.icon}/62fx62f` : "";
     return `<tr>
-      <td style="width:42px">${img ? `<img class="art" src="${img}" alt="" loading="lazy">` : ""}</td>
+      <td style="width:42px">${art(c.icon)}</td>
       <td class="cardname"><b>${esc(c.name)}</b>${c.foil ? '<span class="foil">FOIL</span>' : ""}<span class="faint">${esc(c.game)}</span></td>
       <td class="r num">${d.buyer ? money(d.buyer) : '<span class="faint">none</span>'}</td>
-      <td class="r num hide-sm">${d.buyer ? money(d.receive ?? null) : "–"}</td>
+      <td class="r num hide-sm">${d.buyer ? money(d.receive) : "–"}</td>
       <td class="r num hide-sm">${d.gems || 0}</td>
       <td><span class="verdict ${e.action}">${e.action === "sell" ? "Sell" : "Gems"}</span></td>
       <td class="acts">
-        <button data-id="${e.id}" data-a="sell" ${d.buyer ? "" : "disabled"}>Sell</button><button data-id="${e.id}" data-a="gems" ${d.gems ? "" : "disabled"}>Gems</button><button data-id="${e.id}" data-a="keep">Keep</button>
+        <button data-id="${esc(e.id)}" data-a="sell" ${d.buyer ? "" : "disabled"}>Sell</button><button data-id="${esc(e.id)}" data-a="gems" ${d.gems ? "" : "disabled"}>Gems</button><button data-id="${esc(e.id)}" data-a="keep">Keep</button>
       </td></tr>`;
-  }).join("");
+  }).join(""));
 }
 
-function renderGames(games) {
-  $("#games").innerHTML = games.length ? games.map(g => `<tr>
-    <td>${esc(g.name)}${g.skipped ? ' <span class="faint small">· skipped</span>' : ""}</td>
+function renderGames(games, kept) {
+  fill($("#games"), games.length ? games.map(g => `<tr class="${g.skipped ? "dim" : ""}">
+    <td>${esc(g.name)}${g.skipped ? '<span class="tag">skipped</span>' : ""}${g.keep ? '<span class="tag">kept</span>' : ""}</td>
     <td class="r num">${g.drops}</td><td class="r num hide-sm">${g.earned - g.drops} / ${g.earned}</td>
     <td class="r num">${g.value == null ? '<span class="faint">…</span>' : money(Math.round(g.value))}</td>
-    <td class="r"><button class="link" data-app="${g.appid}" data-skip="${g.skipped ? 0 : 1}">${g.skipped ? "Unskip" : "Skip"}</button></td>
-  </tr>`).join("") : `<tr><td colspan="5" class="empty">No games with card drops left.</td></tr>`;
+    <td class="acts"><button class="link" data-app="${g.appid}" data-skip="${g.skipped ? 0 : 1}">${g.skipped ? "Unskip" : "Skip"}</button><button class="link" data-keep-game="${g.appid}">${g.keep ? "Sell its cards" : "Keep its cards"}</button></td>
+  </tr>`).join("") : `<tr><td colspan="5" class="empty">No games with card drops left.</td></tr>`);
+  fill($("#kept-games"), kept.length ? kept.map(g => `<button class="chip" data-unkeep-game="${g.appid}" title="Stop keeping">${esc(g.name)}<span class="x">×</span></button>`).join("")
+    : '<span class="none">none</span>');
 }
 
-let uiVersion = null;
+function renderItems(s) {
+  const it = s.items, list = it.review, on = it.inventories.filter(i => i.on);
+  $("#tab-items").textContent = list.length || "";
+  $("#items-count").textContent = list.length ? `(${list.length})` : "";
+  $("#i-inv").textContent = on.length;
+  $("#i-review").textContent = list.length;
+  $("#i-listed").textContent = s.stats.items_listed;
+  $("#i-cents").textContent = money(s.stats.items_cents);
+  $("#items-all-sell").disabled = !list.length;
+  const checking = s.busy.includes("items");
+  $("#check-items").disabled = checking;
+  $("#check-items").textContent = checking ? "Checking…" : "Check items";
+  $("#checked-at").textContent = it.checked ? `checked ${ago(it.checked)}${ago(it.checked) === "just now" ? "" : " ago"}` : "press Check items to find them";
+  fill($("#inventories"), it.inventories.length ? it.inventories.map(i => `<button class="chip${i.on ? " on" : ""}" data-inv="${esc(i.key)}"><b>${esc(i.name)}</b> ${i.count}</button>`).join("")
+    : '<span class="none">not looked yet</span>');
+  fill($("#kept-items"), s.settings.items_keep.length ? s.settings.items_keep.map(n => `<button class="chip" data-unkeep-item="${esc(n)}" title="Allow listing again">${esc(n)}<span class="x">×</span></button>`).join("")
+    : '<span class="none">none</span>');
+  $("#items-head").hidden = !list.length;
+  fill($("#items"), !list.length ? `<tr><td colspan="5" class="empty">${on.length ? "Nothing waiting. Check items to look again." : "Switch on an inventory above, then Check items."}</td></tr>`
+    : list.map(e => {
+    const i = e.item, d = e.detail;
+    return `<tr>
+      <td style="width:60px">${art(i.icon, true)}</td>
+      <td class="cardname"><b>${esc(i.name)}</b>${i.amount > 1 ? `<span class="tag">×${i.amount}</span>` : ""}<span class="faint">${esc([i.kind, i.game].filter(Boolean).join(" · "))}</span></td>
+      <td class="r num">${money(d.buyer)}${i.amount > 1 ? '<span class="faint small"> each</span>' : ""}</td>
+      <td class="r num hide-sm">${money(d.receive)}</td>
+      <td class="acts"><button data-item="${esc(e.id)}" data-a="sell">Sell</button><button data-item="${esc(e.id)}" data-a="keep">Keep</button><button class="link" data-item="${esc(e.id)}" data-a="always" title="Keep this and never offer one like it again">Always keep</button></td>
+    </tr>`;
+  }).join(""));
+}
+
+function renderTape(history) {
+  const html = history.map(h => `<div class="${h.kind}"><span class="mark">${MARK[h.kind] || "·"}</span><time>${new Date(h.at * 1000)
+    .toLocaleString([], {month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false})}</time><span class="t">${esc(h.text)}</span></div>`).join("");
+  document.querySelectorAll(".tape").forEach(el => fill(el, html));
+}
+
 function render(s) {
   if (uiVersion && s.ui !== uiVersion) return location.reload();  // the page itself was updated
   uiVersion = s.ui;
   state = s;
   $("#signin").hidden = s.signed_in;
   $("#app").hidden = !s.signed_in;
+  $("#tabs").hidden = !s.signed_in;
   $("#signout").hidden = !s.signed_in;
   $("#who").textContent = s.signed_in ? `signed in as ${s.account || "you"}` : "";
   if (!s.signed_in) {
-    $("#qrbox").hidden = !s.qr;
-    $("#start-signin").textContent = s.qr ? "New code" : "Show the QR code";
-    if (s.qr && s.qr !== qrShown) {
-      $("#qr").innerHTML = `<img src="/api/qr.svg?u=${encodeURIComponent(s.qr)}" alt="Sign-in QR code">`;
-      qrShown = s.qr;
-    }
+    $("#qrbox").hidden = !s.qr_svg;
+    $("#signin-error").hidden = !s.signin_error;
+    $("#signin-error").textContent = s.signin_error || "";
+    $("#start-signin").textContent = s.qr_svg ? "New code" : "Show the QR code";
+    if (s.qr_svg !== qrShown) { $("#qr").innerHTML = s.qr_svg || ""; qrShown = s.qr_svg; }
     return;
   }
+  renderTabs();
   const farming = s.idling.length > 0;
   $("#ticker").classList.toggle("paused", !farming);
   $("#ticker-label").textContent = farming ? "FARMING" : "IDLE";
-  $("#status").textContent = (s.status === "starting" ? "Starting…" : s.status) + (s.working ? `  ·  working through ${s.working}` : "");
-  $("#now").innerHTML = s.idling.map(i => `${esc(i.name)} — on it ${ago(i.since)}, last drop ${ago(i.last_drop)} ago`).join("<br>");
+  $("#status").textContent = (s.status === "starting" ? "Starting…" : s.status) + (s.working ? `  ·  ${s.working} to list or turn into gems` : "");
+  fill($("#now"), s.idling.map(i => `${esc(i.name)} — on it ${ago(i.since)}, ${i.last_drop ? "last drop " + ago(i.last_drop) + " ago" : "no drop yet"}`).join("<br>"));
   $("#error").hidden = !s.error;
   $("#error").textContent = s.error ? "Problem: " + s.error : "";
   $("#s-left").textContent = s.drops_left;
   $("#s-drops").textContent = s.stats.drops;
   $("#s-listed").textContent = `${s.stats.listed} · ${money(s.stats.listed_cents)}`;
   $("#s-gems").textContent = s.stats.gems;
+  const sorting = s.busy.includes("cards");
+  $("#review-existing").disabled = sorting;
+  $("#review-existing").textContent = sorting ? "Sorting…" : "Sort cards I have";
   renderSettings(s.settings);
   renderReview(s.review);
-  renderGames(s.games);
-  $("#log").innerHTML = s.history.map(h => `<div class="${h.kind}"><span class="mark">${MARK[h.kind] || "·"}</span><time>${new Date(h.at * 1000)
-    .toLocaleString([], {month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false})}</time><span class="t">${esc(h.text)}</span></div>`).join("");
+  renderGames(s.games, s.kept_games);
+  renderItems(s);
+  renderTape(s.history);
 }
 
 async function load() {
   try { render(await (await fetch("/api/state")).json()); }
-  catch { $("#status").textContent = "Card Farm isn't running"; }
+  catch (e) { $("#status").textContent = "Card Farm isn't answering (" + e + ")"; }
 }
+
+const setting = (k, v) => post("/api/settings", {[k]: v});
+const without = (list, v) => list.filter(x => String(x) !== String(v));
 
 document.addEventListener("click", e => {
   const t = e.target.closest("button");
-  if (!t) return;
-  if (t.classList.contains("toggle")) return post("/api/settings", {[t.dataset.key]: !t.classList.contains("on")});
+  if (!t || !state) return;
+  const s = state.settings, d = t.dataset;
+  if (d.tab) { tab = d.tab; try { localStorage.setItem("tab", tab); } catch {} return renderTabs(); }
+  if (t.classList.contains("toggle")) return setting(d.key, !t.classList.contains("on"));
   const pick = t.closest(".pick");
-  if (pick) return post("/api/settings", {[pick.dataset.key]: pick.dataset.key === "games_at_once" ? +t.dataset.v : t.dataset.v});
-  if (t.dataset.id) return post("/api/review", {ids: [t.dataset.id], action: t.dataset.a});
-  if (t.dataset.app) return post(t.dataset.skip === "1" ? "/api/skip" : "/api/unskip", {appid: +t.dataset.app});
+  if (pick) {
+    const k = pick.dataset.key, v = k === "games_at_once" ? +d.v : d.v;
+    if (k === "items_new" && v === "auto" && s.items_new !== "auto"
+        && !confirm("List new items automatically as they turn up in the inventories you switched on? Items already there stay put.")) return;
+    return setting(k, v);
+  }
+  if (d.id) return post("/api/review", {ids: [d.id], action: d.a});
+  if (d.item) return post("/api/items/review", {ids: [d.item], action: d.a});
+  if (d.app) return post(d.skip === "1" ? "/api/skip" : "/api/unskip", {appid: +d.app});
+  if (d.keepGame) return setting("never_touch", s.never_touch.includes(+d.keepGame) ? without(s.never_touch, d.keepGame) : [...s.never_touch, +d.keepGame]);
+  if (d.unkeepGame) return setting("never_touch", without(s.never_touch, d.unkeepGame));
+  if (d.unkeepItem) return setting("items_keep", without(s.items_keep, d.unkeepItem));
+  if (d.inv) return setting("items_inventories", s.items_inventories.includes(d.inv) ? without(s.items_inventories, d.inv) : [...s.items_inventories, d.inv]);
 });
 document.addEventListener("change", e => {
   const k = e.target.dataset.key;
-  if (k) post("/api/settings", {[k]: e.target.type === "number" ? +e.target.value : e.target.value});
+  if (!k || e.target.type !== "number") return;
+  const v = e.target.value.trim() === "" ? NaN : Math.round(+e.target.value);
+  if (!Number.isFinite(v) || v < 0) { e.target.value = state.settings[k]; return; }  // a cleared box isn't a 0
+  setting(k, v);
 });
 $("#start-signin").onclick = () => post("/api/sign-in");
 $("#signout").onclick = () => confirm("Sign Card Farm out of Steam? Farming stops.") && post("/api/sign-out");
 $("#refresh").onclick = () => post("/api/refresh");
 $("#review-existing").onclick = () => post("/api/review-existing");
+$("#check-items").onclick = () => post("/api/items/check");
 $("#do-suggested").onclick = () => confirm(`Do the suggestion for all ${state.review.length} cards? Gems can't be undone.`)
   && post("/api/review", {ids: "all", action: "suggested"});
 $("#all-sell").onclick = () => confirm(`List all ${state.review.length} cards on the market?`) && post("/api/review", {ids: "all", action: "sell"});
 $("#all-gems").onclick = () => confirm(`Turn all ${state.review.length} cards into gems? This can't be undone.`)
   && post("/api/review", {ids: "all", action: "gems"});
+$("#items-all-sell").onclick = () => confirm(`List all ${state.items.review.length} items on the market at the prices shown?`)
+  && post("/api/items/review", {ids: "all", action: "sell"});
 load();
 setInterval(load, 3000);
 </script>

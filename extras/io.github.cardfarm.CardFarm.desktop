@@ -3,6 +3,6 @@ Type=Application
 Name=Card Farm
 Comment=Steam trading cards: farm, sell, gems
 Exec=card-farm
-Icon=steam
+Icon=io.github.cardfarm.CardFarm
 Categories=Game;Utility;
 StartupWMClass=io.github.cardfarm.CardFarm

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- Card Farm's own icon: a trading card on a ledger square, with the masthead's orange slash -->
+  <rect x="8" y="8" width="112" height="112" fill="#191714"/>
+  <rect x="34" y="22" width="60" height="84" fill="#f2ede2"/>
+  <rect x="41" y="29" width="46" height="40" fill="none" stroke="#191714" stroke-width="4"/>
+  <rect x="41" y="77" width="46" height="5" fill="#191714"/>
+  <rect x="41" y="88" width="30" height="5" fill="#191714"/>
+  <path d="M78 106 L104 22 L112 22 L86 106 Z" fill="#d9480f"/>
+</svg>
