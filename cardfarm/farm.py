@@ -140,15 +140,25 @@ class Farm:
     # --- main loop ---------------------------------------------------------------------------
     def run(self):
         threading.Thread(target=self._worker, daemon=True).start()
+        backoff = 0  # minutes; grows while Steam keeps saying "too many requests"
         while True:
+            wait = 30
             try:
                 self.tick()
-                self.error = None
+                self.error, backoff = None, 0
+            except steam.HttpError as e:
+                if e.status != 429:
+                    self.error = str(e)
+                else:
+                    backoff = min(backoff * 2 or 5, 30)
+                    wait = backoff * 60
+                    self.error = f"Steam asked Card Farm to slow down (too many requests); trying again in {backoff} min"
+                    self.log(self.error, "warn")
             except Exception as e:
                 self.error = str(e)
                 traceback.print_exc()
             self.save()
-            self._wake.wait(30)
+            self._wake.wait(wait)
             self._wake.clear()
 
     def tick(self):
@@ -521,6 +531,12 @@ class Farm:
             what = e["card"]["name"] if e["kind"] == "card" else e["item"]["name"]
             try:
                 listed += self._do(job["action"], e)
+            except steam.HttpError as err:
+                if err.status == 429:  # leave it queued and try again later
+                    self.log(f"Steam asked to slow down; {what} waits 5 min", "warn")
+                    time.sleep(300)
+                    continue
+                self.log(f"Couldn't {job['action']} {what}: {err}", "warn")
             except Exception as err:
                 if steam.ALREADY_LISTED in str(err):
                     self.log(f"{what} is already listed and waits for your OK in the Steam app")

@@ -11,7 +11,8 @@ UA = "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
 
 class HttpError(Exception):
     def __init__(self, status, body=""):
-        super().__init__(f"HTTP {status}")
+        super().__init__("Steam says too many requests (HTTP 429); Card Farm waits and tries again"
+                         if status == 429 else f"HTTP {status}")
         self.status, self.body = status, body
 
 

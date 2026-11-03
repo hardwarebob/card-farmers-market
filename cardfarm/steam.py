@@ -39,7 +39,7 @@ def page_count(page):
 def badges(session):
     base = f"{COMMUNITY}/profiles/{session.steamid}/badges/?l=english"
     status, first = request(base, cookies=session.cookies())
-    if status != 200:
+    if status != 200:  # a 429 here makes the farm's loop back off
         raise HttpError(status)
     if "g_steamID = false" in first:
         raise RuntimeError("Steam says we're signed out; sign in again")
@@ -66,7 +66,7 @@ def _inventory(session, appid, context):
     url = f"{COMMUNITY}/inventory/{session.steamid}/{appid}/{context}?l=english&count=2000"
     assets, descs, start = [], {}, None
     while True:
-        d = get_json(url + (f"&start_assetid={start}" if start else ""), cookies=session.cookies())
+        d = _patient(lambda: get_json(url + (f"&start_assetid={start}" if start else ""), cookies=session.cookies()))
         assets += d.get("assets", [])
         for x in d.get("descriptions", []):
             descs[(x["classid"], x["instanceid"])] = x
@@ -105,6 +105,8 @@ def inventories(session):
     """Every inventory on the account that has something in it:
     [{"key": "730/2", "appid", "context", "name", "count"}], biggest first."""
     status, page = request(f"{COMMUNITY}/profiles/{session.steamid}/inventory/?l=english", cookies=session.cookies())
+    if status == 429:
+        raise HttpError(429)
     m = re.search(r"g_rgAppContextData\s*=\s*(\{.*?\});\s*$", page, re.M)
     if status != 200 or not m:
         raise RuntimeError("Steam didn't show the list of your inventories")
@@ -137,7 +139,8 @@ def items_in_inventory(session, appid, context, name=""):
 def pending_listings(session):
     """Asset ids listed on the market but still waiting for confirmation in the Steam app. They stay
     in the inventory until confirmed, and Steam refuses to list them a second time."""
-    d = get_json(f"{COMMUNITY}/market/mylistings/render/?query=&start=0&count=10&norender=1", cookies=session.cookies())
+    d = _patient(lambda: get_json(f"{COMMUNITY}/market/mylistings/render/?query=&start=0&count=10&norender=1",
+                                  cookies=session.cookies()))
     if not d.get("success"):
         raise RuntimeError("Steam didn't show your market listings")
     return {str(listing["asset"]["id"]) for listing in d.get("listings_to_confirm") or [] if listing.get("asset")}
