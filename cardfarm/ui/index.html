@@ -36,6 +36,9 @@ main { max-width: 1180px; margin: 0 auto; padding: 0 20px 64px; }
 .mast { display: flex; align-items: flex-end; gap: 16px; padding: 14px 0 0; border-bottom: 3px double var(--ink); flex-wrap: wrap; }
 .mast .who { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--faint); padding-bottom: 8px; }
 .mast .link { margin-bottom: 6px; }
+.mast .ver { font-family: var(--mono); font-size: 11px; color: var(--faint); padding-bottom: 8px; }
+.mast .small-go { margin-bottom: 4px; padding: 5px 8px; font-size: 11px; }
+.mast a { color: var(--signal); margin-bottom: 7px; font-family: var(--mono); }
 .tabs { display: flex; }
 .tabs button { font: 800 17px/1 var(--head); font-stretch: condensed; letter-spacing: .05em; padding: 9px 16px 8px;
   border: 1px solid var(--ink); border-bottom: 0; margin-right: -1px; color: var(--faint); }
@@ -161,6 +164,9 @@ td.acts button.link { padding: 2px 0; margin-left: 10px; }
       <button data-tab="cards">Cards<span class="count" id="tab-cards"></span></button><button data-tab="items">Items<span class="count" id="tab-items"></span></button>
     </div>
     <span class="who" id="who"></span>
+    <span class="ver" id="ver"></span>
+    <button id="update" class="go small-go" hidden></button>
+    <a id="update-link" class="small" target="_blank" rel="noopener" hidden></a>
     <button id="signout" class="link" hidden>Sign out</button>
     <button id="quit" class="link" hidden title="Stop farming and close Card Farm">Quit</button>
   </div>
@@ -440,10 +446,21 @@ function renderTape(history) {
   document.querySelectorAll(".tape").forEach(el => fill(el, html));
 }
 
+function renderUpdate(s) {
+  const u = s.update, busy = s.busy.includes("update");
+  $("#ver").textContent = s.version === "dev" ? "" : s.version.replace(/^v/, "");
+  $("#update").hidden = !(u && u.installable);
+  $("#update").disabled = busy;
+  $("#update").textContent = busy ? "Updating…" : u ? `Update to ${u.version.replace(/^v/, "")}` : "";
+  $("#update-link").hidden = !(u && !u.installable);
+  if (u) { $("#update-link").href = u.page; $("#update-link").textContent = `${u.version.replace(/^v/, "")} is out`; }
+}
+
 function render(s) {
   if (uiVersion && s.ui !== uiVersion) return location.reload();  // the page itself was updated
   uiVersion = s.ui;
   state = s;
+  renderUpdate(s);
   $("#signin").hidden = s.signed_in;
   $("#app").hidden = !s.signed_in;
   $("#tabs").hidden = !s.signed_in;
@@ -516,6 +533,8 @@ document.addEventListener("change", e => {
   setting(k, v);
 });
 $("#start-signin").onclick = () => post("/api/sign-in");
+$("#update").onclick = () => confirm(`Update Card Farm to ${state.update.version.replace(/^v/, "")}? It closes, updates and opens `
+  + "again in a moment. Your settings and sign-in stay.") && post("/api/update");
 $("#quit").hidden = !BRIDGE;
 $("#quit").onclick = () => confirm("Quit Card Farm? Farming stops until you open it again.") && call("POST", "/api/quit");
 $("#signout").onclick = () => confirm("Sign Card Farm out of Steam? Farming stops.") && post("/api/sign-out");

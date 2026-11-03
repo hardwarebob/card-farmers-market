@@ -36,6 +36,7 @@ class CardFarmApp(Adw.Application):
         Gtk.Window.set_default_icon_name(APP_ID)
         self.farm = self.make_farm()
         self.farm.notify = lambda title, body: GLib.idle_add(self._notify, title, body)
+        self.farm.on_quit = lambda: GLib.idle_add(self.quit)
         threading.Thread(target=self.farm.run, daemon=True).start()
         WebKit.WebContext.get_default().register_uri_scheme("cardfarm", self._answer)
         for name, accels, act in (("quit", ["<Control>q"], self.quit),
@@ -120,7 +121,7 @@ class CardFarmApp(Adw.Application):
 
     def _stay_inside(self, view, decision, kind):
         """Links that leave Card Farm open in the normal browser."""
-        if kind != WebKit.PolicyDecisionType.NAVIGATION_ACTION:
+        if kind not in (WebKit.PolicyDecisionType.NAVIGATION_ACTION, WebKit.PolicyDecisionType.NEW_WINDOW_ACTION):
             return False
         uri = decision.get_navigation_action().get_request().get_uri()
         if uri.startswith(HOME) or uri.startswith("about:"):

@@ -40,6 +40,14 @@ def request(url, data=None, cookies=None, headers=None, timeout=30):
     return int(status or 0), body
 
 
+def download(url, path, timeout=600):
+    """Save a file (following redirects); True when it arrived whole."""
+    cmd = ["curl", "-s", "-L", "-f", "--max-time", str(timeout), "-A", UA, "-o", path, "-K", "-"]
+    done = subprocess.run(cmd, input=f"url = {_quoted(url)}\n".encode(), capture_output=True,
+                          timeout=timeout + 10, **QUIET)
+    return done.returncode == 0 and os.path.exists(path)
+
+
 def get_json(url, **kw):
     status, body = request(url, **kw)
     if status != 200:

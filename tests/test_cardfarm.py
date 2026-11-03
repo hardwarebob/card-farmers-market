@@ -1,6 +1,7 @@
 import hashlib
 import json
 import pathlib
+import sys
 import threading
 import time
 
@@ -337,3 +338,64 @@ def test_a_card_no_drop_explains_goes_to_review_after_a_while(world):
     f.state["unexplained"]["1"] -= farm_mod.EXPLAIN_WAIT
     f._check_inventory()
     assert [e["id"] for e in f.state["review"]] == ["1"] and f.state["queue"] == []
+
+
+# --- updates ---------------------------------------------------------------------------------
+from cardfarm import update  # noqa: E402
+
+
+def release(tag, prerelease=True, names=("Card-Farm-Windows.zip", "card-farm.pyz")):
+    return {"tag_name": tag, "prerelease": prerelease, "draft": False, "html_url": f"https://x/{tag}",
+            "assets": [{"name": n, "browser_download_url": f"https://x/{tag}/{n}", "digest": "sha256:ab"} for n in names]}
+
+
+def test_versions_sort():
+    assert update.version_key("v0.2.0-beta.7") < update.version_key("v0.2.0-beta.10") < update.version_key("v0.2.0")
+    assert update.version_key("dev") is None
+
+
+def test_the_newest_release_for_this_system_is_offered():
+    rel = [release("v0.2.0-beta.6"), release("v0.2.0-beta.8"), release("v0.2.0-beta.7")]
+    offer = update.newest(rel, "v0.2.0-beta.7", "windows")
+    assert offer == {"version": "v0.2.0-beta.8", "page": "https://x/v0.2.0-beta.8",
+                     "url": "https://x/v0.2.0-beta.8/Card-Farm-Windows.zip", "sha256": "ab"}
+    assert update.newest(rel, "v0.2.0-beta.8", "windows") is None          # already the newest
+    assert update.newest(rel, "v0.2.0", "windows") is None                 # finished versions skip betas
+    assert update.newest(rel, "v0.2.0-beta.7", None)["url"] is None        # from source: a link only
+
+
+def test_pyz_update_swaps_the_file_after_card_farm_exits(tmp_path):
+    import subprocess
+    if sys.platform != "linux":
+        pytest.skip("the .pyz is the Linux download")
+    old, new = tmp_path / "card-farm.pyz", tmp_path / "new.pyz"
+    old.write_text("old"), new.write_text("new")
+    waiter = subprocess.Popen(["sleep", "1"])
+    threading.Thread(target=waiter.wait).start()  # collect it when it ends, as a launcher would
+    update.install(str(new), relaunch=False, wait_for=waiter.pid, target=str(old)).wait(10)
+    assert old.read_text() == "new" and not new.exists() and waiter.poll() is not None
+
+
+@pytest.mark.skipif(sys.platform not in ("win32", "darwin"), reason="the Windows and macOS installers")
+def test_app_update_swaps_the_app_after_card_farm_exits(tmp_path):
+    """Runs on the release builders: the real helper replaces a stand-in app with the new one."""
+    import shutil
+    import subprocess
+    windows = sys.platform == "win32"
+    inner = "Card Farm" if windows else "Card Farm.app"
+    new_app = tmp_path / "new" / inner
+    (new_app if windows else new_app / "Contents" / "MacOS").mkdir(parents=True)
+    marker = "Card Farm.exe" if windows else "Contents/MacOS/Card Farm"
+    (new_app / marker).write_text("new")
+    if windows:
+        package = shutil.make_archive(str(tmp_path / "Card-Farm-Windows"), "zip", tmp_path / "new", inner)
+    else:
+        package = str(tmp_path / "Card-Farm-macOS.zip")
+        subprocess.run(["ditto", "-c", "-k", "--keepParent", str(new_app), package], check=True)
+    old_app = tmp_path / "installed" / inner
+    (old_app / marker).parent.mkdir(parents=True)
+    (old_app / marker).write_text("old")
+    waiter = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1)"])
+    threading.Thread(target=waiter.wait).start()
+    update.install(package, relaunch=False, wait_for=waiter.pid, target=str(old_app)).wait(120)
+    assert (old_app / marker).read_text() == "new"

@@ -42,6 +42,7 @@ class WebviewApp:
         if _show_running_copy(self.data_dir, self.background):
             return 0
         self.farm = self.make_farm()
+        self.farm.on_quit = self.quit
         threading.Thread(target=self.farm.run, daemon=True).start()
         # a file:// address: pywebview starts its built-in web server only for bare paths
         page = pathlib.Path(HERE, "ui", "index.html").as_uri()

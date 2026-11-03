@@ -49,6 +49,8 @@ def route(farm, path, body):
         return farm.skip(int(body["appid"]))
     if path == "/api/unskip":
         return farm.unskip(int(body["appid"]))
+    if path == "/api/update":
+        return farm.install_update()
     if path == "/api/refresh":
         return farm.refresh()
     raise ValueError("unknown action")

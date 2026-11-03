@@ -8,13 +8,14 @@ import threading
 import time
 import traceback
 
-from . import qr, rules, steam
+from . import qr, rules, steam, update
 from .auth import Session
 from .idler import Idler, game_you_are_playing, steam_pid
 
 BADGES_EVERY = 10 * 60
 INVENTORY_EVERY = 30 * 60
 ITEMS_EVERY = 60 * 60
+UPDATE_EVERY = 6 * 3600
 SKIP_FOR = 12 * 3600
 EXPLAIN_WAIT = 20 * 60  # the badges page shows a drop a minute or two after the inventory does
 OWED_FOR = 2 * 3600     # a drop count no card turned up for is forgotten after this
@@ -56,6 +57,8 @@ class Farm:
         self.signin_error = None
         self.busy = set()  # long jobs running for the page: "cards", "items"
         self.notify = _notify
+        self.on_quit = None  # set by the window: closes Card Farm (after an update is handed over)
+        self.update, self._next_update = None, 0
         self._next_badges = self._next_inventory = 0
         self._next_items = time.time() + ITEMS_EVERY
         self._soon = False
@@ -172,6 +175,12 @@ class Farm:
 
     def tick(self):
         s = self.settings
+        if time.time() >= self._next_update:
+            self._next_update = time.time() + UPDATE_EVERY
+            try:
+                self.update = update.check()
+            except Exception as e:
+                print(f"Update check failed: {e}", flush=True)
         if not self.session.signed_in:
             return self._idle_none("Sign in to start")
         if s["items_new"] != "off" and time.time() >= self._next_items:
@@ -644,7 +653,8 @@ class Farm:
                 "items": {"inventories": [dict(i, on=i["key"] in self.settings["items_inventories"])
                                           for i in st["items"]["inventories"]],
                           "review": st["items"]["review"], "checked": st["items"]["checked"]},
-                "ui": _page_version(),
+                "ui": _page_version(), "version": update.VERSION,
+                "update": self.update and dict(self.update, installable=bool(self.update.get("url"))),
             }
 
     def _qr(self):
@@ -652,6 +662,26 @@ class Farm:
         if url and self._qr_svg[0] != url:
             self._qr_svg = (url, qr.svg(url))
         return self._qr_svg[1] if url else None
+
+    def install_update(self):
+        """The page's Update button: download, check, hand over to the installer helper, quit."""
+        if not self.update:
+            raise ValueError("no update to install")
+        self._in_background("update", self._install_update)
+
+    def _install_update(self):
+        try:
+            self.log(f"Downloading Card Farm {self.update['version']}…")
+            path = update.fetch(self.update)
+            self.idler.stop_all()
+            self.save()
+            update.install(path)
+            self.log(f"Installing {self.update['version']}; Card Farm reopens in a moment")
+            self.save()
+            if self.on_quit:
+                self.on_quit()
+        except Exception as e:
+            self.log(f"Couldn't update: {e}", "warn")
 
     def unskip(self, appid):
         with self.lock:
