@@ -13,7 +13,8 @@ COMMUNITY = "https://steamcommunity.com"
 
 # --- badges -------------------------------------------------------------------------------
 def parse_badges(page):
-    """Game rows of one badges page: [{appid, name, drops, hours}]. Only the owner sees drops."""
+    """Game rows of one badges page: [{appid, name, drops (left), earned (in all)}]. Only the owner
+    sees drops; the playtime box there is usually blank, so hours aren't read."""
     games = []
     for row in page.split('class="badge_row is_link"')[1:]:
         app = re.search(r"/gamecards/(\d+)/", row)
@@ -21,10 +22,10 @@ def parse_badges(page):
             continue
         title = re.search(r'class="badge_title">\s*(.*?)\s*(?:&nbsp;|<)', row, re.S)
         drops = re.search(r"(\d+) card drops? remaining", row)
-        hours = re.search(r"([\d,.]+) hrs on record", row)
+        earned = re.search(r"Card drops earned:\s*(\d+)", row)
+        left = int(drops[1]) if drops else 0
         games.append({"appid": int(app[1]), "name": html.unescape(title[1].strip()) if title else app[1],
-                      "drops": int(drops[1]) if drops else 0,
-                      "hours": float(hours[1].replace(",", "")) if hours else 0.0})
+                      "drops": left, "earned": int(earned[1]) if earned else left})
     return games
 
 

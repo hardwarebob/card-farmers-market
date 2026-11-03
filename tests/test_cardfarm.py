@@ -58,9 +58,9 @@ def test_settings_are_cleaned():
 def test_badges_page():
     page = (HERE / "badges_page.html").read_text()
     assert steam.parse_badges(page) == [
-        {"appid": 440, "name": "Team & Fortress", "drops": 3, "hours": 1204.5},
-        {"appid": 620, "name": "Portal Two", "drops": 1, "hours": 0.5},
-        {"appid": 730, "name": "Strike", "drops": 0, "hours": 0.0},
+        {"appid": 440, "name": "Team & Fortress", "drops": 3, "earned": 4},
+        {"appid": 620, "name": "Portal Two", "drops": 1, "earned": 1},
+        {"appid": 730, "name": "Strike", "drops": 0, "earned": 0},
     ]
     assert steam.page_count(page) == 2
 
