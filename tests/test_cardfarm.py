@@ -133,7 +133,7 @@ def test_actions():
 # --- the farm ----------------------------------------------------------------------------------
 class FakeIdler:
     def __init__(self, farm=None):
-        self.procs, self.farm, self.lock_free = set(), farm, []
+        self.procs, self.farm, self.lock_free, self.library = set(), farm, [], "lib"
 
     def running(self):
         return set(self.procs)
@@ -284,3 +284,18 @@ def test_packaged_app_is_its_own_idler(monkeypatch):
 def test_idler_child_gives_up_on_a_bad_library():
     import subprocess
     assert subprocess.run(idler.child_command("/no/such/library"), stdin=subprocess.DEVNULL).returncode == 2
+
+
+def test_idling_starts_before_the_inventory_is_read(world, monkeypatch):
+    """A slow or rate-limited inventory mustn't keep games from starting."""
+    f = world["make"]()
+    world["badges"] = [{"appid": 10, "name": "Game", "drops": 3, "earned": 3}]
+    monkeypatch.setattr(farm_mod, "steam_pid", lambda: 1)
+    monkeypatch.setattr(farm_mod, "game_you_are_playing", lambda ours: None)
+
+    def limited(session):
+        raise steam.HttpError(429)
+    monkeypatch.setattr(steam, "cards_in_inventory", limited)
+    with pytest.raises(steam.HttpError):
+        f.tick()
+    assert list(f.state["idling"]) == ["10"] and f.status == "Farming Game"

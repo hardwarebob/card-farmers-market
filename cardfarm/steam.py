@@ -236,6 +236,9 @@ def _cents(text):
     return round(float(text.strip("$ ").replace(",", "")) * 100) if text else None
 
 
+on_wait = None  # called (no arguments) before each minute spent waiting out a 429, to tell the page
+
+
 def _patient(call, tries=6):
     for i in range(tries):
         try:
@@ -243,6 +246,8 @@ def _patient(call, tries=6):
         except HttpError as e:
             if e.status != 429 or i == tries - 1:
                 raise
+            if on_wait:
+                on_wait()
             time.sleep(60)
 
 

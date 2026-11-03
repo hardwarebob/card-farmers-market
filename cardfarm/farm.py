@@ -60,6 +60,11 @@ class Farm:
         self._qr_svg = (None, None)
         self._wake = threading.Event()
         self._jobs = threading.Event()
+        steam.on_wait = self._slowed_down
+
+    def _slowed_down(self):
+        self._starting("Steam asked Card Farm to slow down; waiting a minute…")
+        self.log("Steam said too many requests; waiting a minute", "warn")
 
     def _path(self, name):
         return os.path.join(self.data, name)
@@ -180,16 +185,23 @@ class Farm:
         playing = game_you_are_playing(self.idler.running()) if s["pause_when_playing"] else None
         if playing:
             return self._idle_none(f"Paused while you play ({self._name(playing)})")
-        now = time.time()
+        now, dropped = time.time(), False
         if now >= self._next_badges or now >= self._next_inventory:
+            self._starting("Reading your badges…")
             dropped = self._refresh_badges()
             self._next_badges = now + BADGES_EVERY
-            if dropped or now >= self._next_inventory:  # the inventory is always read after fresh badges
-                self._check_inventory()
-                self._next_inventory = time.time() + INVENTORY_EVERY
         self._check_stalls()
-        self._choose_games()
+        self._choose_games()  # idling first: the inventory and prices can take a while
+        if dropped or now >= self._next_inventory:  # read right after fresh badges, to tell drops apart
+            self._next_inventory = time.time() + 5 * 60  # if this fails, again in 5 min
+            self._check_inventory()
+            self._next_inventory = time.time() + INVENTORY_EVERY
         self._price_one_game()
+
+    def _starting(self, what):
+        """Say what's going on while nothing is idling yet (the first minutes after starting)."""
+        if not self.state["idling"]:
+            self.status = what
 
     def _idle_none(self, why):
         if self.idler.running():
@@ -251,6 +263,10 @@ class Farm:
                 self.state["idling"].pop(str(appid))
         for appid in stop:
             self.idler.stop(appid)
+        if want and not self.idler.library:
+            self._starting("Finding Steam's API library in your games (first start only)…")
+        elif want:
+            self._starting("Starting games…")
         failed = self.idler.start(want)
         now = time.time()
         with self.lock:
