@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   linux:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +31,7 @@ jobs:
           path: dist/card-farm.pyz
 
   windows:
+    timeout-minutes: 15
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,10 +41,12 @@ jobs:
       - run: pip install pytest pyinstaller pywebview pillow
       - run: python -m pytest tests -q
       - run: python packaging/build.py windows
+      # Card Farm.exe itself stays unmarked: a marked exe gets SmartScreen's "unknown publisher"
+      # prompt, which a person clicks through (Run anyway) but would hang this unattended check
       - name: Mark the build as downloaded, like a browser does
         shell: pwsh
         run: |
-          Get-ChildItem -Recurse -File "dist\Card Farm" | ForEach-Object {
+          Get-ChildItem -Recurse -File "dist\Card Farm" | Where-Object Name -ne "Card Farm.exe" | ForEach-Object {
             Set-Content -Path $_.FullName -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3"
           }
           if (-not (Get-Item "dist\Card Farm\_internal\pythonnet\runtime\Python.Runtime.dll" -Stream Zone.Identifier -ErrorAction SilentlyContinue)) { throw "mark not applied" }
@@ -66,6 +70,7 @@ jobs:
           path: dist/Card-Farm-Windows.zip
 
   macos:
+    timeout-minutes: 15
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
