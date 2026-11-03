@@ -17,6 +17,20 @@ def data_dir():
     return os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"), "card-farm")
 
 
+def unblock_downloaded_files():
+    """Windows marks every file unzipped from a download as "from the internet", and .NET then
+    refuses to load the DLLs the window needs (pythonnet: "Failed to resolve
+    Python.Runtime.Loader.Initialize"). Take that mark off Card Farm's own files."""
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return
+    for folder, _, files in os.walk(os.path.dirname(sys.executable)):
+        for name in files:
+            try:
+                os.remove(os.path.join(folder, name) + ":Zone.Identifier")
+            except OSError:
+                pass
+
+
 def main():
     if len(sys.argv) > 2 and sys.argv[1] == "--idle-child":  # one game's idler (the packaged app runs itself)
         from .idler import child
@@ -30,6 +44,7 @@ def main():
         except (ImportError, ValueError) as e:
             sys.exit(f"Card Farm needs GTK 4, libadwaita and WebKitGTK 6 with their Python bindings ({e}).")
         sys.exit(run_window(lambda: Farm(data), background=background))
+    unblock_downloaded_files()
     try:
         from .app_webview import run_window
     except ImportError as e:

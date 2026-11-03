@@ -39,6 +39,13 @@ jobs:
       - run: pip install pytest pyinstaller pywebview pillow
       - run: python -m pytest tests -q
       - run: python packaging/build.py windows
+      - name: Mark the build as downloaded, like a browser does
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse -File "dist\Card Farm" | ForEach-Object {
+            Set-Content -Path $_.FullName -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3"
+          }
+          if (-not (Get-Item "dist\Card Farm\_internal\pythonnet\runtime\Python.Runtime.dll" -Stream Zone.Identifier -ErrorAction SilentlyContinue)) { throw "mark not applied" }
       - name: The built app opens its window and shows the sign-in page
         shell: pwsh
         run: |
