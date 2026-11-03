@@ -37,12 +37,24 @@ def notices():
         name = dist.metadata["Name"]
         if name.lower() in BUILD_ONLY:
             continue
-        texts = [f.read_text() for f in dist.files or []
-                 if f.name.upper().startswith(("LICENSE", "LICENCE", "COPYING", "NOTICE")) and f.locate().exists()]
+        texts = [t for t in (_licence_text(f) for f in dist.files or []) if t]
         summary = dist.metadata.get("License-Expression") or dist.metadata.get("License") or ""
         parts.append(f"=== {name} {dist.version} ({summary.splitlines()[0] if summary else 'see text'}) ===\n"
                      + ("\n".join(texts) if texts else f"{dist.metadata.get('Home-page') or ''}\n"))
     return "\n\n".join(parts)
+
+
+def _licence_text(f):
+    """The text of a licence file a library ships, or None for anything else (some libraries have
+    code or binaries whose names start with LICENSE)."""
+    if not f.name.upper().startswith(("LICENSE", "LICENCE", "COPYING", "NOTICE")) or \
+            f.suffix.lower() in (".py", ".pyc", ".so", ".dylib", ".dll", ".pyd"):
+        return None
+    try:
+        data = f.locate().read_bytes()
+    except OSError:
+        return None
+    return None if b"\0" in data else data.decode("utf-8", "replace")
 
 
 def linux():
