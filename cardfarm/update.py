@@ -89,13 +89,18 @@ def fetch(offer):
 
 WINDOWS_HELPER = r"""
 param([int]$Wait, [string]$Zip, [string]$Target, [string]$Start)
+Start-Transcript -Path (Join-Path (Split-Path $Zip) "update.log") | Out-Null
 Wait-Process -Id $Wait -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ("card-farm-new-" + [guid]::NewGuid())
 Expand-Archive -LiteralPath $Zip -DestinationPath $tmp -Force
-robocopy (Join-Path $tmp "Card Farm") $Target /E /R:5 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+# /IS /IT: copy every file, even ones robocopy would call unchanged (same size, and zip times are
+# rounded to 2 seconds)
+robocopy (Join-Path $tmp "Card Farm") $Target /E /IS /IT /R:5 /W:1 /NFL /NDL /NJH /NJS /NP
+Write-Output "robocopy exit $LASTEXITCODE"
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 if ($Start) { Start-Process -FilePath $Start }
+Stop-Transcript | Out-Null
 """
 
 POSIX_HELPER = r"""
