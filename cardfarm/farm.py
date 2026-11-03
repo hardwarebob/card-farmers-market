@@ -352,6 +352,7 @@ class Farm:
                           for g in self._candidates()] if self.session.signed_in else [],
                 "drops_left": sum(g["drops"] for g in st["games"]),
                 "review": st["review"], "history": st["history"][:80], "stats": st["stats"],
+                "ui": int(os.path.getmtime(os.path.join(os.path.dirname(__file__), "ui", "index.html"))),
             }
 
     def unskip(self, appid):

@@ -305,7 +305,10 @@ function renderGames(games) {
   </tr>`).join("") : `<tr><td colspan="5" class="empty">No games with card drops left.</td></tr>`;
 }
 
+let uiVersion = null;
 function render(s) {
+  if (uiVersion && s.ui !== uiVersion) return location.reload();  // the page itself was updated
+  uiVersion = s.ui;
   state = s;
   $("#signin").hidden = s.signed_in;
   $("#app").hidden = !s.signed_in;
