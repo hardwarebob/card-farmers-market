@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   linux:
-    timeout-minutes: 15
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,7 +31,7 @@ jobs:
           path: dist/card-farm.pyz
 
   windows:
-    timeout-minutes: 15
+    timeout-minutes: 5
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -70,7 +70,7 @@ jobs:
           path: dist/Card-Farm-Windows.zip
 
   macos:
-    timeout-minutes: 15
+    timeout-minutes: 5
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -116,5 +116,7 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" out/* --clobber
           else
-            gh release create "$GITHUB_REF_NAME" out/* --title "Card Farm ${GITHUB_REF_NAME#v}" --notes-file packaging/release-notes.md
+            # tags like v0.2.0-beta.4 are pre-releases
+            gh release create "$GITHUB_REF_NAME" out/* --title "Card Farm ${GITHUB_REF_NAME#v}" --notes-file packaging/release-notes.md \
+              $([[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease)
           fi
