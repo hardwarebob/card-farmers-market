@@ -26,7 +26,7 @@ tells you when some are waiting.
 ## Install
 
 ```sh
-pipx install git+https://github.com/OWNER/card-farm
+pipx install git+https://github.com/maybeimdreaming/card-farm
 card-farm
 ```
 
@@ -34,7 +34,7 @@ card-farm
 
 ```sh
 curl -o ~/.local/share/applications/io.github.cardfarm.CardFarm.desktop \
-  https://raw.githubusercontent.com/OWNER/card-farm/main/extras/io.github.cardfarm.CardFarm.desktop
+  https://raw.githubusercontent.com/maybeimdreaming/card-farm/main/extras/io.github.cardfarm.CardFarm.desktop
 ```
 
 Closing the window while farming keeps Card Farm running in the background; open it again from the
@@ -44,7 +44,7 @@ To farm from login without opening the window (`card-farm --headless`):
 
 ```sh
 mkdir -p ~/.config/systemd/user
-curl -o ~/.config/systemd/user/card-farm.service https://raw.githubusercontent.com/OWNER/card-farm/main/extras/card-farm.service
+curl -o ~/.config/systemd/user/card-farm.service https://raw.githubusercontent.com/maybeimdreaming/card-farm/main/extras/card-farm.service
 systemctl --user enable --now card-farm
 ```
 
