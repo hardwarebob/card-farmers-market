@@ -11,28 +11,14 @@ permissions:
   contents: write
 
 jobs:
-  test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install pytest
-      - run: python -m pytest tests -q
-
   linux:
-    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - run: pip install pytest && python -m pytest tests -q
       - run: python packaging/build.py linux
       - name: The idler child starts from inside the .pyz
         run: |
@@ -44,14 +30,14 @@ jobs:
           path: dist/card-farm.pyz
 
   windows:
-    needs: test
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install pyinstaller pywebview pillow
+      - run: pip install pytest pyinstaller pywebview pillow
+      - run: python -m pytest tests -q
       - run: python packaging/build.py windows
       - name: The built app opens its window and shows the sign-in page
         shell: pwsh
@@ -73,14 +59,14 @@ jobs:
           path: dist/Card-Farm-Windows.zip
 
   macos:
-    needs: test
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install pyinstaller pywebview pillow
+      - run: pip install pytest pyinstaller pywebview pillow
+      - run: python -m pytest tests -q
       - run: python packaging/build.py macos
       - name: The built app opens its window and shows the sign-in page
         run: |
