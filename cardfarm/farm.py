@@ -432,7 +432,8 @@ class Farm:
             pending = self._drop_pending_from_review()
             skip = self._queued_ids() | pending
             cards = [c for c in steam.cards_in_inventory(self.session) if c["assetid"] not in skip]
-            self.log(f"Pricing {len(cards)} cards you already have…")
+            self.log(f"Pricing {len(cards)} cards you already have; Steam allows about 20 price lookups a "
+                     "minute, so this can take a few minutes…")
             for c in cards:
                 self.handle(c, "existing")
             self.log(f"Review list ready: {len(self.state['review'])} cards")

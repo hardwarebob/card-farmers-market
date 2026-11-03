@@ -2,6 +2,7 @@ import hashlib
 import json
 import pathlib
 import threading
+import time
 
 import pytest
 
@@ -299,3 +300,13 @@ def test_idling_starts_before_the_inventory_is_read(world, monkeypatch):
     with pytest.raises(steam.HttpError):
         f.tick()
     assert list(f.state["idling"]) == ["10"] and f.status == "Farming Game"
+
+
+def test_market_requests_are_spaced_out(tmp_path, monkeypatch):
+    asked = []
+    monkeypatch.setattr(steam, "get_json", lambda url: asked.append(time.time()) or {"goo_value": "5"})
+    p = steam.Prices(str(tmp_path / "prices.json"))
+    p.GAP = 0.2
+    for appid in (1, 2, 3):
+        p.gems(appid, 3)
+    assert all(b - a >= 0.19 for a, b in zip(asked, asked[1:])) and len(asked) == 3

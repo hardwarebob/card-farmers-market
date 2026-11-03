@@ -151,10 +151,12 @@ class Prices:
     """Lowest asking prices (by market hash name) and gem values, cached for a few hours. One fetch
     at a time, whichever part of Card Farm asks, to stay gentle with the market."""
     TTL = 6 * 3600
+    GAP = 3  # seconds between market requests: Steam answers faster ones with 429 "too many requests"
 
     def __init__(self, path):
         self.path = path
         self.lock = threading.RLock()
+        self._last = 0.0
         try:
             self.cache = json.load(open(path))
         except (OSError, ValueError):
@@ -165,6 +167,14 @@ class Prices:
         with open(tmp, "w") as f:
             json.dump(dict(self.cache), f)
         os.replace(tmp, self.path)
+
+    def _ask(self, url):
+        """One market request, at least GAP seconds after the previous one (callers hold the lock)."""
+        time.sleep(max(0.0, self._last + self.GAP - time.time()))
+        try:
+            return _patient(lambda: get_json(url))
+        finally:
+            self._last = time.time()
 
     def _fresh(self, key):
         hit = self.cache.get(key)
@@ -186,11 +196,10 @@ class Prices:
                 q = urllib.parse.urlencode({"appid": 753, "norender": 1, "start": start, "count": 10,
                                             "category_753_Game[]": f"tag_app_{appid}",
                                             "category_753_item_class[]": "tag_item_class_2"})
-                d = _patient(lambda: get_json(f"{COMMUNITY}/market/search/render/?{q}"))
+                d = self._ask(f"{COMMUNITY}/market/search/render/?{q}")
                 for it in d.get("results", []):
                     prices[it["hash_name"]] = it["sell_price"]
                 total, start = d.get("total_count", 0), start + 10
-                time.sleep(4)
             return self._remember(key, prices)
 
     def item(self, appid, hash_name):
@@ -200,8 +209,7 @@ class Prices:
             if self._fresh(key):
                 return self.cache[key]["v"]
             q = urllib.parse.urlencode({"appid": appid, "currency": 1, "market_hash_name": hash_name})
-            d = _patient(lambda: get_json(f"{COMMUNITY}/market/priceoverview/?{q}"))
-            time.sleep(3)
+            d = self._ask(f"{COMMUNITY}/market/priceoverview/?{q}")
             return self._remember(key, _cents(d.get("lowest_price")))
 
     def gems(self, appid, item_type=None, foil=False):
@@ -214,11 +222,10 @@ class Prices:
             types = [item_type] if item_type is not None else range(1, 25)
             vals = []
             for t in types:
-                d = _patient(lambda: get_json(f"{COMMUNITY}/auction/ajaxgetgoovalueforitemtype/"
-                                              f"?appid={appid}&item_type={t}&border_color={int(foil)}"))
+                d = self._ask(f"{COMMUNITY}/auction/ajaxgetgoovalueforitemtype/"
+                              f"?appid={appid}&item_type={t}&border_color={int(foil)}")
                 if int(d.get("goo_value") or 0):
                     vals.append(int(d["goo_value"]))
-                time.sleep(0.25)
             return self._remember(key, min(vals) if vals else 0)
 
     def gem_sack(self):
@@ -226,8 +233,8 @@ class Prices:
         with self.lock:
             if self._fresh("sack"):
                 return self.cache["sack"]["v"]
-            d = _patient(lambda: get_json(f"{COMMUNITY}/market/priceoverview/?appid=753&currency=1"
-                                          "&market_hash_name=753-Sack%20of%20Gems"))
+            d = self._ask(f"{COMMUNITY}/market/priceoverview/?appid=753&currency=1"
+                          "&market_hash_name=753-Sack%20of%20Gems")
             return self._remember("sack", _cents(d["lowest_price"]))
 
 
