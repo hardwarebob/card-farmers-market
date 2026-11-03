@@ -2,6 +2,7 @@
 Type=Application
 Name=Card Farm
 Comment=Steam trading cards: farm, sell, gems
-Exec=xdg-open http://127.0.0.1:8797
+Exec=card-farm
 Icon=steam
 Categories=Game;Utility;
+StartupWMClass=io.github.cardfarm.CardFarm

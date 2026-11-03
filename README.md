@@ -1,7 +1,7 @@
 # Card Farm
 
 Farm your Steam trading card drops on Linux, then sell each card or turn it into gems by rules you set.
-Card Farm runs in the background and has a small control page in your browser.
+Card Farm is a desktop app. It keeps farming in the background when you close its window.
 
 - **Native Linux idling.** It tells your running Steam client that a game is playing, the way the game itself would. No Wine, Proton or `.exe` helpers.
 - **Notices stalls.** It checks your badges page as it goes. A game that stops dropping cards gets restarted, then set aside for a while.
@@ -19,6 +19,7 @@ tells you when some are waiting.
 
 - Linux, with the Steam client running and signed in
 - Python 3.10 or newer, and `curl`
+- For the window: GTK 4, libadwaita and WebKitGTK 6 with their Python bindings (PyGObject). Most GNOME and KDE desktops have these already. Without them, Card Farm runs without a window and you use its panel in a browser at <http://127.0.0.1:8797>.
 - Steam's own `libsteam_api.so`, which comes with any Proton version or most native Linux games in your library. Card Farm finds it automatically and doesn't ship a copy.
 - The Steam mobile app with Steam Guard, needed for the sign-in and for market listings
 
@@ -29,9 +30,17 @@ pipx install git+https://github.com/OWNER/card-farm
 card-farm
 ```
 
-Then open <http://127.0.0.1:8797>.
+`card-farm` opens the window. To add it to your app menu:
 
-To start it with your desktop session:
+```sh
+curl -o ~/.local/share/applications/io.github.cardfarm.CardFarm.desktop \
+  https://raw.githubusercontent.com/OWNER/card-farm/main/extras/io.github.cardfarm.CardFarm.desktop
+```
+
+Closing the window while farming keeps Card Farm running in the background; open it again from the
+menu to see it, or choose **Quit** in its menu to stop.
+
+To farm from login without opening the window (`card-farm --headless`):
 
 ```sh
 mkdir -p ~/.config/systemd/user
@@ -39,7 +48,7 @@ curl -o ~/.config/systemd/user/card-farm.service https://raw.githubusercontent.c
 systemctl --user enable --now card-farm
 ```
 
-`extras/card-farm.desktop` adds a menu entry that opens the page.
+The window then connects to that background copy instead of starting a second one.
 
 Settings, the review list and your Steam sign-in are kept in `~/.local/share/card-farm`; the sign-in
 file is readable only by you. `CARD_FARM_DATA` and `CARD_FARM_PORT` change the folder and the port.
@@ -59,7 +68,7 @@ little, so most cards with a buyer end up sold.
 
 - Card drops come at Steam's pace, about one every 20–40 minutes of play per game. No tool can change that. What Card Farm saves is the time lost when an idler silently stalls.
 - Turning a card into gems can't be undone. Listings can be cancelled from the Steam Market page.
-- The control page only listens on your own computer. Every change needs a header that other websites can't send, so a page open in another tab can't act on your account.
+- The control panel is served only to your own computer. Every change needs a header that other websites can't send, so a page open in another tab can't act on your account.
 - Card Farm is not affiliated with Valve. Use it on your own account, at your own pace.
 
 ## Development
@@ -67,7 +76,8 @@ little, so most cards with a buyer end up sold.
 ```sh
 python3 -m venv .venv && .venv/bin/pip install pytest
 .venv/bin/python -m pytest tests
-python3 -m cardfarm
+python3 -m cardfarm              # window
+python3 -m cardfarm --headless   # no window; panel at http://127.0.0.1:8797
 ```
 
 The code uses only the Python standard library, plus `curl` for web requests, because Steam's market

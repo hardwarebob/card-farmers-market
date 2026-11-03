@@ -34,14 +34,15 @@ def serve(farm, port=PORT):
         def do_GET(self):
             if not self._host_ok():
                 return self._send(403, {"error": "wrong host"})
-            if self.path in ("/", "/index.html"):
+            path = self.path.split("?")[0]
+            if path in ("/", "/index.html"):
                 return self._send(200, UI.read_bytes(), "text/html; charset=utf-8")
-            if self.path.startswith("/api/qr.svg"):
+            if path == "/api/qr.svg":
                 qr = farm.session.qr
                 if not qr:
                     return self._send(404, {"error": "no sign-in in progress"})
                 return self._send(200, svg(qr["url"]).encode(), "image/svg+xml")
-            if self.path == "/api/state":
+            if path == "/api/state":
                 return self._send(200, farm.snapshot())
             self._send(404, {"error": "not found"})
 

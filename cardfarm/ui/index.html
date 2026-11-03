@@ -77,6 +77,8 @@ td.num, th.num { text-align: right; }
 #qr { background: #fff; padding: 4px; line-height: 0; display: inline-block; border-radius: 10px; margin: 10px 0; }
 .signin { text-align: center; padding: 30px 16px; }
 .now { margin-top: 6px; }
+.in-app h1 { visibility: hidden; }  /* the window's title bar already says Card Farm */
+.in-app main { padding-top: 8px; }
 </style>
 </head>
 <body>
@@ -165,6 +167,7 @@ td.num, th.num { text-align: right; }
 </main>
 
 <script>
+if (new URLSearchParams(location.search).has("app")) document.documentElement.classList.add("in-app");
 const $ = s => document.querySelector(s);
 const money = c => c == null ? "–" : "$" + (c / 100).toFixed(2);
 const ago = t => { const m = Math.round((Date.now() / 1000 - t) / 60);

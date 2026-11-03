@@ -3,7 +3,7 @@ Description=Card Farm (Steam trading cards)
 After=graphical-session.target
 
 [Service]
-ExecStart=%h/.local/bin/card-farm
+ExecStart=%h/.local/bin/card-farm --headless
 Restart=on-failure
 RestartSec=30
 
