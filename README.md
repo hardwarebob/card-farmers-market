@@ -105,4 +105,4 @@ code encoder (`cardfarm/qr.py`) and the icon were made for this project.
 
 ## License
 
-MIT
+MIT. See [NOTICE.md](NOTICE.md) for credits that apply to early versions in this repository's history.
