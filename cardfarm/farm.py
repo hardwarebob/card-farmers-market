@@ -16,6 +16,8 @@ BADGES_EVERY = 10 * 60
 INVENTORY_EVERY = 30 * 60
 ITEMS_EVERY = 60 * 60
 SKIP_FOR = 12 * 3600
+EXPLAIN_WAIT = 20 * 60  # the badges page shows a drop a minute or two after the inventory does
+OWED_FOR = 2 * 3600     # a drop count no card turned up for is forgotten after this
 
 
 def fresh_state():
@@ -24,7 +26,8 @@ def fresh_state():
             "baseline": False,
             "queue": [],     # [{"action", "entry"}] still to do, in order; kept across restarts
             "kept": [],      # asset ids you chose to keep, so they aren't offered again
-            "owed": {},      # appid -> card drops the badges page showed that the inventory hasn't yet
+            "owed": {},      # appid -> [when] for card drops the badges page showed, not yet matched to a card
+            "unexplained": {},  # asset id -> when a new card was first seen that no drop explained yet
             "steamid": None,
             "items": {"inventories": [], "review": [], "seen": {}, "checked": 0}}
 
@@ -55,6 +58,7 @@ class Farm:
         self.notify = _notify
         self._next_badges = self._next_inventory = 0
         self._next_items = time.time() + ITEMS_EVERY
+        self._soon = False
         self._steam = None
         self._poller = None
         self._qr_svg = (None, None)
@@ -194,8 +198,9 @@ class Farm:
         self._choose_games()  # idling first: the inventory and prices can take a while
         if dropped or now >= self._next_inventory:  # read right after fresh badges, to tell drops apart
             self._next_inventory = time.time() + 5 * 60  # if this fails, again in 5 min
-            self._check_inventory()
-            self._next_inventory = time.time() + INVENTORY_EVERY
+            self._check_inventory()  # may ask for a sooner look, for cards the badges don't show yet
+            self._next_inventory = min(self._next_inventory if self._soon else float("inf"),
+                                       time.time() + INVENTORY_EVERY)
         self._price_one_game()
 
     def _starting(self, what):
@@ -227,7 +232,7 @@ class Farm:
                 got = max(before["drops"] - g["drops"],
                           (g["earned"] - g["drops"]) - (before["earned"] - before["drops"]))
                 if got > 0:
-                    owed[str(g["appid"])] = owed.get(str(g["appid"]), 0) + got
+                    owed[str(g["appid"])] = _owed_list(owed.get(str(g["appid"]))) + [time.time()] * got
                     dropped = True
                     info = self.state["idling"].get(str(g["appid"]))
                     if info:
@@ -319,6 +324,7 @@ class Farm:
 
     # --- drops ---------------------------------------------------------------------------------
     def _check_inventory(self):
+        self._soon = False
         cards = steam.cards_in_inventory(self.session)
         ids = {c["assetid"] for c in cards}
         with self.lock:
@@ -336,10 +342,18 @@ class Farm:
             return
         if self.state["review"]:
             self._drop_pending_from_review()
-        handled = set()
+        handled, now = set(), time.time()
         for card in new:
+            key = str(card["appid"])
             with self.lock:
-                owed = self.state["owed"].get(str(card["appid"]), 0)
+                owed = [t for t in _owed_list(self.state["owed"].get(key)) if now - t < OWED_FOR]
+                self.state["owed"][key] = owed
+                waiting_since = self.state["unexplained"].setdefault(card["assetid"], now)
+            if not owed and now - waiting_since < EXPLAIN_WAIT:
+                # not on the badges page yet, or not a drop: look again in a few minutes
+                self._soon = True
+                self._next_inventory = now + 3 * 60
+                continue
             try:
                 self.handle(card, "drop" if owed else "new")
             except Exception as e:  # stays unseen, so the next check tries again
@@ -347,11 +361,13 @@ class Farm:
                 continue
             handled.add(card["assetid"])
             with self.lock:
+                self.state["unexplained"].pop(card["assetid"], None)
                 if owed:
-                    self.state["owed"][str(card["appid"])] = owed - 1
+                    self.state["owed"][key] = owed[1:]
                     self.state["stats"]["drops"] += 1
         with self.lock:
             self.state["seen"] = sorted((seen & ids) | handled)
+            self.state["unexplained"] = {a: t for a, t in self.state["unexplained"].items() if a in ids}
 
     def _drop_pending_from_review(self):
         """Cards listed elsewhere and waiting for the phone can't be listed again."""
@@ -646,6 +662,11 @@ class Farm:
         with self.lock:
             self.state["skipped"][str(appid)] = time.time() + SKIP_FOR
         self.poke()
+
+
+def _owed_list(value):
+    """Drop counts saved by older versions were plain numbers."""
+    return list(value) if isinstance(value, list) else [time.time()] * int(value or 0)
 
 
 def _page_version():

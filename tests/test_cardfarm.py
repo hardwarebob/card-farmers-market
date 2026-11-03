@@ -194,6 +194,9 @@ def test_only_real_drops_are_sold_automatically(world):
     assert [j["entry"]["id"] for j in f.state["queue"]] == ["1"] and f.state["stats"]["drops"] == 1
     world["cards"].append(card(assetid="2"))   # turned up without a drop (bought for a badge?)
     f._refresh_badges(); f._check_inventory()
+    assert f.state["review"] == []             # first it waits for the badges page to catch up
+    f.state["unexplained"]["2"] -= farm_mod.EXPLAIN_WAIT
+    f._refresh_badges(); f._check_inventory()
     assert [j["entry"]["id"] for j in f.state["queue"]] == ["1"]
     assert [e["id"] for e in f.state["review"]] == ["2"] and f.state["stats"]["drops"] == 1
 
@@ -310,3 +313,27 @@ def test_market_requests_are_spaced_out(tmp_path, monkeypatch):
     for appid in (1, 2, 3):
         p.gems(appid, 3)
     assert all(b - a >= 0.19 for a, b in zip(asked, asked[1:])) and len(asked) == 3
+
+
+def test_a_drop_the_badges_page_shows_late_is_still_a_drop(world):
+    """Steam's badges page lags the inventory by a minute or two."""
+    f = world["make"]()
+    world["badges"] = [{"appid": 10, "name": "Game", "drops": 3, "earned": 3}]
+    f._refresh_badges(); f._check_inventory()          # first look
+    world["cards"] = [card(assetid="1")]
+    f._refresh_badges(); f._check_inventory()          # the card is there, the badges don't know yet
+    assert f.state["queue"] == [] and f.state["review"] == [] and f._soon
+    world["badges"] = [{"appid": 10, "name": "Game", "drops": 2, "earned": 3}]
+    f._refresh_badges(); f._check_inventory()          # a few minutes later
+    assert [j["entry"]["id"] for j in f.state["queue"]] == ["1"] and f.state["stats"]["drops"] == 1
+
+
+def test_a_card_no_drop_explains_goes_to_review_after_a_while(world):
+    f = world["make"]()
+    world["badges"] = [{"appid": 10, "name": "Game", "drops": 3, "earned": 3}]
+    f._refresh_badges(); f._check_inventory()
+    world["cards"] = [card(assetid="1")]
+    f._check_inventory()
+    f.state["unexplained"]["1"] -= farm_mod.EXPLAIN_WAIT
+    f._check_inventory()
+    assert [e["id"] for e in f.state["review"]] == ["1"] and f.state["queue"] == []
