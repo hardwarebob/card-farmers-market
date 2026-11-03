@@ -447,8 +447,8 @@ function renderTape(history) {
 }
 
 function renderUpdate(s) {
-  const u = s.update, busy = s.busy.includes("update");
-  $("#ver").textContent = s.version === "dev" ? "" : s.version.replace(/^v/, "");
+  const u = s.update, busy = (s.busy || []).includes("update"), version = s.version || "dev";
+  $("#ver").textContent = version === "dev" ? "" : version.replace(/^v/, "");
   $("#update").hidden = !(u && u.installable);
   $("#update").disabled = busy;
   $("#update").textContent = busy ? "Updating…" : u ? `Update to ${u.version.replace(/^v/, "")}` : "";
@@ -460,7 +460,7 @@ function render(s) {
   if (uiVersion && s.ui !== uiVersion) return location.reload();  // the page itself was updated
   uiVersion = s.ui;
   state = s;
-  renderUpdate(s);
+  try { renderUpdate(s); } catch (e) { console.error(e); }  // never let the top bar blank the page
   $("#signin").hidden = s.signed_in;
   $("#app").hidden = !s.signed_in;
   $("#tabs").hidden = !s.signed_in;
