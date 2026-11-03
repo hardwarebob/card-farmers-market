@@ -4,8 +4,9 @@ listens on the network, and no browser can open it.
 
 One copy at a time: opening Card Farm again brings its window back. Closing the window while
 farming keeps farming in the background; Quit (in the menu) stops everything."""
+import json
 import os
-import shutil
+import pkgutil
 import threading
 
 import gi
@@ -71,6 +72,27 @@ class CardFarmApp(Adw.Application):
         body.set_content(self.view)
         self.window.set_content(body)
         self.window.present()
+        if os.environ.get("CARD_FARM_SELFTEST"):
+            GLib.timeout_add_seconds(1, self._selftest, os.environ["CARD_FARM_SELFTEST"], [60])
+
+    def _selftest(self, out, tries):
+        """CARD_FARM_SELFTEST=<file>: once the page has drawn the farm's state, write what it shows
+        to <file> and quit (how builds are checked)."""
+        def done(view, result):
+            try:
+                shown = json.loads(view.evaluate_javascript_finish(result).to_string())
+            except Exception as e:
+                shown = {"state": False, "error": repr(e)}
+            if shown.get("state") or tries[0] <= 0:
+                with open(out, "w") as f:
+                    json.dump(dict(shown, ok=bool(shown.get("state"))), f)
+                self.quit()
+            else:
+                tries[0] -= 1
+                GLib.timeout_add_seconds(1, self._selftest, out, tries)
+        self.view.evaluate_javascript("JSON.stringify({state: !!state, signin: !document.querySelector('#signin').hidden, "
+                                      "button: document.querySelector('#start-signin').textContent})", -1, None, None, None, done)
+        return False
 
     def _answer(self, request):
         """A request from the page: read it here, answer it on a worker thread (the farm may take a
@@ -140,13 +162,14 @@ class CardFarmApp(Adw.Application):
 def _install_icon():
     """Put Card Farm's icon where the desktop looks for app icons (the menu entry and the window
     use it by name)."""
-    src = os.path.join(os.path.dirname(__file__), "ui", "icon.svg")
+    icon = pkgutil.get_data("cardfarm", "ui/icon.svg")
     base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
     dest = os.path.join(base, "icons", "hicolor", "scalable", "apps", f"{APP_ID}.svg")
     try:
-        if not os.path.exists(dest) or open(dest, "rb").read() != open(src, "rb").read():
+        if not os.path.exists(dest) or open(dest, "rb").read() != icon:
             os.makedirs(os.path.dirname(dest), exist_ok=True)
-            shutil.copyfile(src, dest)
+            with open(dest, "wb") as f:
+                f.write(icon)
     except OSError:
         pass
 

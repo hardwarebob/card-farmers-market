@@ -5,7 +5,7 @@ import threading
 
 import pytest
 
-from cardfarm import api, farm as farm_mod, qr, rules, steam
+from cardfarm import api, farm as farm_mod, idler, qr, rules, steam
 
 HERE = pathlib.Path(__file__).parent
 
@@ -266,3 +266,21 @@ def test_listing_uses_todays_price(world):
     f = world["make"]()
     f._do("sell", {"kind": "card", "card": card(), "detail": {"buyer": 500}})
     assert world["sold"] == [("1", rules.received(50))]
+
+
+# --- finding Steam on each system -------------------------------------------------------------
+def test_library_folders_are_read():
+    vdf = '"libraryfolders"\n{\n\t"0"\n\t{\n\t\t"path"\t\t"C:\\\\Program Files (x86)\\\\Steam"\n\t}\n' \
+          '\t"1"\n\t{\n\t\t"path"\t\t"D:\\\\SteamLibrary"\n\t}\n}\n'
+    assert idler.parse_library_folders(vdf) == ["C:\\Program Files (x86)\\Steam", "D:\\SteamLibrary"]
+
+
+def test_packaged_app_is_its_own_idler(monkeypatch):
+    monkeypatch.setattr(idler.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(idler.sys, "executable", "/Applications/Card Farm.app/Contents/MacOS/Card Farm")
+    assert idler.child_command("lib") == ["/Applications/Card Farm.app/Contents/MacOS/Card Farm", "--idle-child", "lib"]
+
+
+def test_idler_child_gives_up_on_a_bad_library():
+    import subprocess
+    assert subprocess.run(idler.child_command("/no/such/library"), stdin=subprocess.DEVNULL).returncode == 2

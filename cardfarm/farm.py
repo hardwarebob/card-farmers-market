@@ -3,6 +3,7 @@ On request it also sorts the other things in your inventories (skins, cases, ...
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -166,7 +167,7 @@ class Farm:
             self.log("Steam restarted; starting the games again")
             self._idle_none("Steam restarted")
         self._steam = pid
-        playing = game_you_are_playing() if s["pause_when_playing"] else None
+        playing = game_you_are_playing(self.idler.running()) if s["pause_when_playing"] else None
         if playing:
             return self._idle_none(f"Paused while you play ({self._name(playing)})")
         now = time.time()
@@ -594,7 +595,7 @@ class Farm:
                 "items": {"inventories": [dict(i, on=i["key"] in self.settings["items_inventories"])
                                           for i in st["items"]["inventories"]],
                           "review": st["items"]["review"], "checked": st["items"]["checked"]},
-                "ui": int(os.path.getmtime(os.path.join(os.path.dirname(__file__), "ui", "index.html"))),
+                "ui": _page_version(),
             }
 
     def _qr(self):
@@ -614,9 +615,37 @@ class Farm:
         self.poke()
 
 
-def _notify(title, body):
-    """Fallback when there's no window app to send notifications through."""
+def _page_version():
+    """Changes when the page's file does, so an open page reloads itself (0 inside a .pyz)."""
     try:
-        subprocess.run(["notify-send", "-a", "Card Farm", title, body], timeout=10)
+        return int(os.path.getmtime(os.path.join(os.path.dirname(__file__), "ui", "index.html")))
+    except OSError:
+        return 0
+
+
+def _notify(title, body):
+    """A desktop notification with each system's own tool (the Linux window sends its own)."""
+    try:
+        if sys.platform == "darwin":
+            script = f"display notification {json.dumps(body)} with title {json.dumps(title)}"
+            subprocess.run(["osascript", "-e", script], timeout=10)
+        elif sys.platform == "win32":
+            subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_TOAST, title, body],
+                           timeout=20, creationflags=0x08000000)
+        else:
+            subprocess.run(["notify-send", "-a", "Card Farm", title, body], timeout=10)
     except Exception:
         pass
+
+
+# Windows' own toast, shown under PowerShell's name (an unpackaged app can't use its own)
+WINDOWS_TOAST = """
+$title, $body = $args
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
+$xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+$text = $xml.GetElementsByTagName('text')
+$text.Item(0).AppendChild($xml.CreateTextNode("Card Farm: $title")) > $null
+$text.Item(1).AppendChild($xml.CreateTextNode($body)) > $null
+$app = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($app).Show([Windows.UI.Notifications.ToastNotification]::new($xml))
+"""

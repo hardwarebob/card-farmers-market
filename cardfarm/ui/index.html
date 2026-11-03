@@ -162,6 +162,7 @@ td.acts button.link { padding: 2px 0; margin-left: 10px; }
     </div>
     <span class="who" id="who"></span>
     <button id="signout" class="link" hidden>Sign out</button>
+    <button id="quit" class="link" hidden title="Stop farming and close Card Farm">Quit</button>
   </div>
 
   <div id="signin" class="gate" hidden>
@@ -330,10 +331,22 @@ let state = null, qrShown = null, uiVersion = null;
 let tab = "cards";
 try { tab = localStorage.getItem("tab") === "items" ? "items" : "cards"; } catch {}
 
+// Windows and macOS open the page as a file and reach the farm through pywebview's bridge;
+// the Linux window serves it from cardfarm:// and answers fetch()
+const BRIDGE = location.protocol === "file:";
+const bridgeReady = BRIDGE ? new Promise(ok => window.pywebview ? ok() : window.addEventListener("pywebviewready", ok)) : null;
+async function call(method, path, body) {
+  const text = method === "POST" ? JSON.stringify(body || {}) : "";
+  if (BRIDGE) { await bridgeReady; return await window.pywebview.api.request(method, path, text); }
+  const r = await fetch(path, method === "POST" ? {method, headers: {"Content-Type": "application/json"}, body: text} : {});
+  return [r.status, await r.text()];
+}
+
 async function post(path, body) {
-  const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) alert(j.error || "Something went wrong");
+  const [status, text] = await call("POST", path, body);
+  let j = {};
+  try { j = JSON.parse(text); } catch {}
+  if (status >= 400) alert(j.error || "Something went wrong");
   load();
   return j;
 }
@@ -403,7 +416,7 @@ function renderItems(s) {
   $("#check-items").disabled = checking;
   $("#check-items").textContent = checking ? "Checking…" : "Check items";
   $("#checked-at").textContent = it.checked ? `checked ${ago(it.checked)}${ago(it.checked) === "just now" ? "" : " ago"}` : "press Check items to find them";
-  fill($("#inventories"), it.inventories.length ? it.inventories.map(i => `<button class="chip${i.on ? " on" : ""}" data-inv="${esc(i.key)}"><b>${esc(i.name)}</b> ${i.count}</button>`).join("")
+  fill($("#inventories"), it.inventories.length ? it.inventories.map(i => `<button class="chip${i.on ? " on" : ""}" data-inv="${esc(i.key)}" title="${i.key === "753/6" ? "Backgrounds, emoticons, boosters and gems; trading cards stay on the Cards tab" : ""}"><b>${esc(i.name)}${i.key === "753/6" ? " (no cards)" : ""}</b> ${i.count}</button>`).join("")
     : '<span class="none">not looked yet</span>');
   fill($("#kept-items"), s.settings.items_keep.length ? s.settings.items_keep.map(n => `<button class="chip" data-unkeep-item="${esc(n)}" title="Allow listing again">${esc(n)}<span class="x">×</span></button>`).join("")
     : '<span class="none">none</span>');
@@ -467,7 +480,7 @@ function render(s) {
 }
 
 async function load() {
-  try { render(await (await fetch("/api/state")).json()); }
+  try { render(JSON.parse((await call("GET", "/api/state"))[1])); }
   catch (e) { $("#status").textContent = "Card Farm isn't answering (" + e + ")"; }
 }
 
@@ -503,6 +516,8 @@ document.addEventListener("change", e => {
   setting(k, v);
 });
 $("#start-signin").onclick = () => post("/api/sign-in");
+$("#quit").hidden = !BRIDGE;
+$("#quit").onclick = () => confirm("Quit Card Farm? Farming stops until you open it again.") && call("POST", "/api/quit");
 $("#signout").onclick = () => confirm("Sign Card Farm out of Steam? Farming stops.") && post("/api/sign-out");
 $("#refresh").onclick = () => post("/api/refresh");
 $("#review-existing").onclick = () => post("/api/review-existing");

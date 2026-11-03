@@ -1,0 +1,116 @@
+# Builds Card Farm for Linux, Windows and macOS, checks each build really opens its window and
+# talks to the farm, and on a v* tag publishes them as a GitHub release.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest
+      - run: python -m pytest tests -q
+
+  linux:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python packaging/build.py linux
+      - name: The idler child starts from inside the .pyz
+        run: |
+          set +e; python3 dist/card-farm.pyz --idle-child /no/such/library; code=$?; set -e
+          test "$code" = 2
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/card-farm.pyz
+
+  windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyinstaller pywebview pillow
+      - run: python packaging/build.py windows
+      - name: The built app opens its window and shows the sign-in page
+        shell: pwsh
+        run: |
+          $env:CARD_FARM_DATA = "$env:RUNNER_TEMP\cf-data"
+          $env:CARD_FARM_SELFTEST = "$env:RUNNER_TEMP\selftest.json"
+          $p = Start-Process -FilePath "dist\Card Farm\Card Farm.exe" -PassThru
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "the window didn't finish its self-test" }
+          Get-Content $env:CARD_FARM_SELFTEST
+          if (-not (Get-Content $env:CARD_FARM_SELFTEST | ConvertFrom-Json).ok) { throw "self-test failed" }
+      - name: The idler child starts from the built app
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\Card Farm\Card Farm.exe" -ArgumentList "--idle-child","C:\no\such\steam_api64.dll" -PassThru -Wait
+          if ($p.ExitCode -ne 2) { throw "idler child exit code $($p.ExitCode)" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/Card-Farm-Windows.zip
+
+  macos:
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyinstaller pywebview pillow
+      - run: python packaging/build.py macos
+      - name: The built app opens its window and shows the sign-in page
+        run: |
+          export CARD_FARM_DATA="$RUNNER_TEMP/cf-data" CARD_FARM_SELFTEST="$RUNNER_TEMP/selftest.json"
+          "dist/Card Farm.app/Contents/MacOS/Card Farm" &
+          pid=$!
+          for i in $(seq 120); do kill -0 $pid 2>/dev/null || break; sleep 1; done
+          kill $pid 2>/dev/null && { echo "the window didn't finish its self-test"; exit 1; }
+          cat "$CARD_FARM_SELFTEST"
+          python3 -c "import json,sys; sys.exit(0 if json.load(open('$CARD_FARM_SELFTEST'))['ok'] else 1)"
+      - name: The idler child starts from the built app
+        run: |
+          set +e; "dist/Card Farm.app/Contents/MacOS/Card Farm" --idle-child /no/such/libsteam_api.dylib; code=$?; set -e
+          test "$code" = 2
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/Card-Farm-macOS.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" out/* --title "Card Farm ${GITHUB_REF_NAME#v}" --notes-file packaging/release-notes.md

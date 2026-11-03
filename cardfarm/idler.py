@@ -1,73 +1,210 @@
 """Pretend to play games: one small process per game tells the running Steam client "I'm game X"
-through Steam's own API library, the way a real game does. No Wine, no Proton."""
-import glob
+through Steam's own API library, the way a real game does. No Wine, no Proton. Works the same on
+Linux, Windows and macOS; only where things live differs."""
+import ctypes
 import os
 import re
 import shutil
-import signal
 import subprocess
 import sys
+import threading
 import time
 
-CHILD = r"""
-import ctypes, signal, sys, time
-libc = ctypes.CDLL("libc.so.6")
-libc.prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG: go away with Card Farm
-steam = ctypes.CDLL(sys.argv[1])
-if not steam.SteamAPI_Init():
-    sys.exit(3)
-signal.signal(signal.SIGTERM, lambda *a: (steam.SteamAPI_Shutdown(), sys.exit(0)))
-while True:
-    steam.SteamAPI_RunCallbacks()
-    time.sleep(1)
-"""
+WINDOWS, MAC = sys.platform == "win32", sys.platform == "darwin"
+LIBRARY = "steam_api64.dll" if WINDOWS else "libsteam_api.dylib" if MAC else "libsteam_api.so"
+QUIET = {"creationflags": 0x08000000} if WINDOWS else {"start_new_session": True}  # no console window / no Ctrl-C
+LINUX_STEAM = ["~/.local/share/Steam", "~/.steam/steam", "~/.var/app/com.valvesoftware.Steam/.local/share/Steam"]
 
-STEAM_DIRS = ["~/.local/share/Steam", "~/.steam/steam", "~/.var/app/com.valvesoftware.Steam/.local/share/Steam"]
-SEARCH = [d + tail for d in STEAM_DIRS for tail in (
-    "/steamapps/common/*/files/lib64/libsteam_api.so",          # Proton
-    "/steamapps/common/SteamVR/bin/linux64/libsteam_api.so",
-    "/steamapps/common/*/libsteam_api.so",                      # native Linux games
-    "/steamapps/common/*/*/libsteam_api.so",
-    "/steamapps/common/*/*/*/libsteam_api.so")]
+
+# --- one idler: the whole child process ---------------------------------------------------------
+def child(library):
+    """Body of one idler process (Card Farm runs itself with --idle-child LIB, SteamAppId set in
+    its environment). It stays until Card Farm closes its stdin, on purpose or by going away."""
+    try:
+        steam = ctypes.CDLL(library)
+    except OSError:
+        sys.exit(2)
+    steam.SteamAPI_Init.restype = ctypes.c_bool  # a C++ bool: only the low byte means anything
+    if not steam.SteamAPI_Init():
+        sys.exit(3)
+    gone = threading.Event()
+    stdin = sys.stdin.buffer if sys.stdin else open(0, "rb", closefd=False)
+    threading.Thread(target=lambda: (stdin.read(), gone.set()), daemon=True).start()
+    while not gone.wait(1):
+        steam.SteamAPI_RunCallbacks()
+    steam.SteamAPI_Shutdown()
+
+
+def child_command(library):
+    if getattr(sys, "frozen", False):  # the packaged app: it is its own idler
+        return [sys.executable, "--idle-child", library]
+    code_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # also works inside a .pyz
+    return [sys.executable, "-c", f"import sys; sys.path.insert(0, {code_root!r}); "
+            "from cardfarm.idler import child; child(sys.argv[1])", library]
+
+
+# --- finding Steam --------------------------------------------------------------------------
+def steam_root():
+    if WINDOWS:
+        path = _registry("SteamPath")
+        return os.path.normpath(path) if path else r"C:\Program Files (x86)\Steam"
+    if MAC:
+        return os.path.expanduser("~/Library/Application Support/Steam")
+    return next((p for p in map(os.path.expanduser, LINUX_STEAM) if os.path.isdir(p)), os.path.expanduser(LINUX_STEAM[0]))
+
+
+def parse_library_folders(text):
+    """The library folders listed in Steam's libraryfolders.vdf."""
+    return [p.replace("\\\\", "\\") for p in re.findall(r'"path"\s+"([^"]+)"', text)]
+
+
+def libraries():
+    """Every Steam library folder (the main one first), each holding a steamapps folder."""
+    root = steam_root()
+    found = [root]
+    for vdf in (os.path.join(root, "steamapps", "libraryfolders.vdf"), os.path.join(root, "config", "libraryfolders.vdf")):
+        try:
+            with open(vdf, encoding="utf-8", errors="replace") as f:
+                found += parse_library_folders(f.read())
+        except OSError:
+            pass
+    seen, out = set(), []
+    for p in found:
+        key = os.path.normcase(os.path.realpath(p))
+        if key not in seen and os.path.isdir(os.path.join(p, "steamapps")):
+            seen.add(key)
+            out.append(p)
+    return out
+
+
+def _candidates(common, depth=5):
+    """Steam API libraries shipped with installed games, shallow ones first. Proton's comes first
+    on Linux: every Proton has one, and it's the right kind."""
+    if not (WINDOWS or MAC):
+        for tool in sorted(os.listdir(common)) if os.path.isdir(common) else []:
+            path = os.path.join(common, tool, "files", "lib64", LIBRARY)
+            if os.path.isfile(path):
+                yield path
+    level = [common]
+    for _ in range(depth):
+        deeper = []
+        for folder in level:
+            try:
+                entries = list(os.scandir(folder))
+            except OSError:
+                continue
+            for e in entries:
+                if e.is_file() and e.name == LIBRARY:
+                    yield e.path
+                elif e.is_dir(follow_symlinks=False):
+                    deeper.append(e.path)
+        level = deeper
+
+
+def _loads(path):
+    """Whether this copy can be used by this computer (64-bit, right processor type)."""
+    try:
+        ctypes.CDLL(path)
+        return True
+    except OSError:
+        return False
 
 
 def find_library(data_dir):
     """Steam's API library, copied next to our data so it survives game uninstalls."""
-    mine = os.path.join(data_dir, "libsteam_api.so")
-    if os.path.exists(mine):
+    mine = os.path.join(data_dir, LIBRARY)
+    if os.path.exists(mine) and _loads(mine):
         return mine
-    for pattern in SEARCH:
-        for path in glob.glob(os.path.expanduser(pattern)):
-            if _is_64bit(path):
+    for lib in libraries():
+        for path in _candidates(os.path.join(lib, "steamapps", "common")):
+            if _loads(path):
                 shutil.copy(path, mine)
                 return mine
-    raise RuntimeError("Couldn't find Steam's libsteam_api.so. Install any Proton version from your "
-                       "Steam library (Library > Tools > Proton), then restart Card Farm.")
+    hint = ("Install any Proton version from your Steam library (Library > Tools > Proton)"
+            if not (WINDOWS or MAC) else "Install any game that uses Steam features (most do)")
+    raise RuntimeError(f"Couldn't find Steam's {LIBRARY} in your Steam library. {hint}, then restart Card Farm.")
 
 
-def _is_64bit(path):
-    with open(path, "rb") as f:
-        head = f.read(5)
-    return head[:4] == b"\x7fELF" and head[4] == 2
+# --- what Steam is doing ----------------------------------------------------------------------
+def _registry(name, key=r"Software\Valve\Steam"):
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as k:
+            return winreg.QueryValueEx(k, name)[0]
+    except OSError:
+        return None
+
+
+def _alive(pid):
+    if WINDOWS:
+        kernel = ctypes.windll.kernel32
+        handle = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        code = ctypes.c_ulong()
+        kernel.GetExitCodeProcess(handle, ctypes.byref(code))
+        kernel.CloseHandle(handle)
+        return code.value == 259  # STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+        return True
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def _pgrep(*args):
+    out = subprocess.run(["pgrep", *args], capture_output=True, text=True).stdout.split()
+    return int(out[0]) if out else None
 
 
 def steam_pid():
-    """The Steam client's process id (its oldest process), or None when Steam isn't running. A new
-    id means Steam restarted, and games it knew about have to say hello again."""
-    for cmd in (["pgrep", "-o", "-x", "steam"], ["pgrep", "-o", "-f", "steamrt64/steam"]):
-        out = subprocess.run(cmd, capture_output=True, text=True).stdout.split()
-        if out:
-            return int(out[0])
-    return None
+    """The Steam client's process id, or None when Steam isn't running. A new id means Steam
+    restarted, and games it knew about have to say hello again."""
+    if WINDOWS:
+        pid = _registry("pid", r"Software\Valve\Steam\ActiveProcess")
+        return pid if pid and _alive(pid) else None
+    if MAC:
+        return _pgrep("-o", "-x", "steam_osx")
+    return _pgrep("-o", "-x", "steam") or _pgrep("-o", "-f", "steamrt64/steam")
 
 
-def game_you_are_playing():
-    """AppId of a game Steam launched for you (Steam starts every game as `reaper SteamLaunch AppId=N`)."""
+def installed_games():
+    """{install folder name: appid} from the app manifests of every library."""
+    out = {}
+    for lib in libraries():
+        apps = os.path.join(lib, "steamapps")
+        for name in os.listdir(apps):
+            if name.startswith("appmanifest_") and name.endswith(".acf"):
+                try:
+                    with open(os.path.join(apps, name), encoding="utf-8", errors="replace") as f:
+                        text = f.read()
+                except OSError:
+                    continue
+                appid, folder = re.search(r'"appid"\s+"(\d+)"', text), re.search(r'"installdir"\s+"([^"]+)"', text)
+                if appid and folder:
+                    out[folder[1]] = int(appid[1])
+    return out
+
+
+def game_you_are_playing(ours=()):
+    """AppId of a game you're playing yourself (not one of Card Farm's idlers), or None."""
+    if WINDOWS:  # Steam keeps the running game in the registry; our idlers count as running too
+        appid = _registry("RunningAppID")
+        return appid if appid and appid not in ours else None
+    if MAC:  # a process running from a game's folder in a Steam library
+        out = subprocess.run(["ps", "-axo", "command="], capture_output=True, text=True).stdout
+        folders = set(re.findall(r"/steamapps/common/([^/]+)/", out))
+        games = installed_games() if folders else {}
+        return next((games[f] for f in folders if f in games and games[f] not in ours), None)
+    # Linux: Steam starts every game as `reaper SteamLaunch AppId=N`
     out = subprocess.run(["pgrep", "-a", "-f", "reaper SteamLaunch AppId="], capture_output=True, text=True).stdout
     m = re.search(r"AppId=(\d+)", out)
     return int(m[1]) if m else None
 
 
+# --- the idlers -------------------------------------------------------------------------------
 class Idler:
     def __init__(self, data_dir):
         self.data_dir = data_dir
@@ -81,10 +218,7 @@ class Idler:
         return set(self.procs)
 
     def start(self, appids):
-        """Start these games together; returns the ones Steam wouldn't take.
-
-        Call it from the farm's own long-lived thread: each child's PR_SET_PDEATHSIG fires when the
-        thread that started it ends, not just the whole program."""
+        """Start these games together; returns the ones Steam wouldn't take."""
         appids = [a for a in appids if a not in self.running()]
         if not appids:
             return set()
@@ -92,9 +226,8 @@ class Idler:
         started = {}
         for appid in appids:
             env = dict(os.environ, SteamAppId=str(appid), SteamGameId=str(appid))
-            started[appid] = subprocess.Popen([sys.executable, "-I", "-c", CHILD, self.library], env=env,
-                                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                              start_new_session=True)
+            started[appid] = subprocess.Popen(child_command(self.library), env=env, stdin=subprocess.PIPE,
+                                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **QUIET)
         time.sleep(3)  # SteamAPI_Init fails within a moment when Steam says no
         failed = set()
         for appid, p in started.items():
@@ -107,10 +240,10 @@ class Idler:
     def stop(self, appid):
         p = self.procs.pop(appid, None)
         if p and p.poll() is None:
-            p.send_signal(signal.SIGTERM)
             try:
+                p.stdin.close()  # the idler's cue to sign off from Steam and exit
                 p.wait(10)
-            except subprocess.TimeoutExpired:
+            except (OSError, subprocess.TimeoutExpired):
                 p.kill()
 
     def stop_all(self):

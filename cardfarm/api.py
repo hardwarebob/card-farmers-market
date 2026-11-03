@@ -1,9 +1,8 @@
 """What the window's page can ask of the farm. The page reaches it through Card Farm's own
 cardfarm:// address inside the window; there's no web server and no network port."""
 import json
-import pathlib
+import pkgutil
 
-UI = pathlib.Path(__file__).parent / "ui"
 PAGES = {"/": ("index.html", "text/html; charset=utf-8"), "/icon.svg": ("icon.svg", "image/svg+xml")}
 
 
@@ -12,7 +11,7 @@ def answer(farm, method, path, body):
     if method == "GET":
         if path in PAGES:
             name, kind = PAGES[path]
-            return 200, kind, (UI / name).read_bytes()
+            return 200, kind, pkgutil.get_data("cardfarm", f"ui/{name}")  # also from inside a .pyz
         if path == "/api/state":
             return _json(200, farm.snapshot())
         return _json(404, {"error": "not found"})

@@ -1,8 +1,11 @@
 """HTTP through curl: Steam's market answers curl but rate-limits Python's own HTTP client."""
 import json
+import os
 import subprocess
+import sys
 import urllib.parse
 
+QUIET = {"creationflags": 0x08000000} if sys.platform == "win32" else {}  # no console window flashing up
 UA = "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
 
 
@@ -29,9 +32,9 @@ def request(url, data=None, cookies=None, headers=None, timeout=30):
     if data is not None:
         config.append(f"data-binary = {_quoted(urllib.parse.urlencode(data))}")
     # -c: keep cookies Steam sets on the way (the inventory page redirects through a cookie check)
-    cmd = ["curl", "-s", "-L", "-c", "/dev/null", "--max-time", str(timeout), "-A", UA, "-w", "\n%{http_code}", "-K", "-"]
+    cmd = ["curl", "-s", "-L", "-c", os.devnull, "--max-time", str(timeout), "-A", UA, "-w", "\n%{http_code}", "-K", "-"]
     out = subprocess.run(cmd, input="\n".join(config).encode() + b"\n",
-                         capture_output=True, timeout=timeout + 10).stdout.decode("utf-8", "replace")
+                         capture_output=True, timeout=timeout + 10, **QUIET).stdout.decode("utf-8", "replace")
     body, _, status = out.rpartition("\n")
     return int(status or 0), body
 

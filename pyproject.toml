@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "card-farm"
-version = "0.1.0"
-description = "Farm Steam trading cards on Linux, then sell them or turn them into gems by your rules"
+version = "0.2.0"
+description = "Farm Steam trading cards on Linux, Windows and macOS, then sell them or turn them into gems by your rules"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["pywebview>=5; sys_platform != 'linux'"]
 
 [project.scripts]
 card-farm = "cardfarm.__main__:main"
