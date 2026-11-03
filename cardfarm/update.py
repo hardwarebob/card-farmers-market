@@ -99,7 +99,7 @@ Expand-Archive -LiteralPath $Zip -DestinationPath $tmp -Force
 robocopy (Join-Path $tmp "Card Farm") $Target /E /IS /IT /R:5 /W:1 /NFL /NDL /NJH /NJS /NP
 Write-Output "robocopy exit $LASTEXITCODE"
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
-if ($Start) { Start-Process -FilePath $Start }
+if ($Start -and $Start -ne "-") { Start-Process -FilePath $Start }
 Stop-Transcript | Out-Null
 """
 
@@ -129,9 +129,11 @@ def install(path, relaunch=True, wait_for=None, target=None):
         with open(script, "w", encoding="utf-8") as f:
             f.write(WINDOWS_HELPER)
         start = os.path.join(target, "Card Farm.exe") if relaunch else ""
+        log = open(os.path.join(os.path.dirname(path), "update-start.log"), "wb")  # PowerShell's own complaints
         return subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
-                                 "-File", script, pid, path, target, start],
-                                creationflags=0x00000008 | 0x00000200 | 0x08000000)  # detached, own group, no window
+                                 "-File", script, "-Wait", pid, "-Zip", path, "-Target", target, "-Start", start or "-"],
+                                stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                                creationflags=0x00000200 | 0x08000000)  # own process group, no window
     if kind == "macos":
         target = target or re.sub(r"(\.app)/Contents/MacOS/.*$", r"\1", sys.executable)
     elif kind == "pyz":

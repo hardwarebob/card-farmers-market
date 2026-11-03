@@ -398,5 +398,5 @@ def test_app_update_swaps_the_app_after_card_farm_exits(tmp_path):
     waiter = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1)"])
     threading.Thread(target=waiter.wait).start()
     update.install(package, relaunch=False, wait_for=waiter.pid, target=str(old_app)).wait(120)
-    log = pathlib.Path(package).parent / "update.log"
-    assert (old_app / marker).read_text() == "new", log.read_text(errors="replace") if log.exists() else "no log"
+    logs = "\n".join(f"{p.name}: {p.read_text(errors='replace')}" for p in pathlib.Path(package).parent.glob("update*.log"))
+    assert (old_app / marker).read_text() == "new", logs or "no logs"
