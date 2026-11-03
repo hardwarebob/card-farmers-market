@@ -99,7 +99,7 @@ Expand-Archive -LiteralPath $Zip -DestinationPath $tmp -Force
 robocopy (Join-Path $tmp "Card Farm") $Target /E /IS /IT /R:5 /W:1 /NFL /NDL /NJH /NJS /NP
 Write-Output "robocopy exit $LASTEXITCODE"
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
-if ($Start -and $Start -ne "-") { Start-Process -FilePath $Start }
+if ($Start -ne "none") { Start-Process -FilePath $Start }
 Stop-Transcript | Out-Null
 """
 
@@ -131,7 +131,7 @@ def install(path, relaunch=True, wait_for=None, target=None):
         start = os.path.join(target, "Card Farm.exe") if relaunch else ""
         log = open(os.path.join(os.path.dirname(path), "update-start.log"), "wb")  # PowerShell's own complaints
         return subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
-                                 "-File", script, "-Wait", pid, "-Zip", path, "-Target", target, "-Start", start or "-"],
+                                 "-File", script, "-Wait", pid, "-Zip", path, "-Target", target, "-Start", start or "none"],
                                 stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                                 creationflags=0x00000200 | 0x08000000)  # own process group, no window
     if kind == "macos":
