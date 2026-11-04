@@ -21,6 +21,12 @@ DEFAULTS = {
     "items_inventories": [],     # "appid/context" of inventories to look in, e.g. "730/2"
     "items_min_cents": 5,        # don't list an item for less than this (what a buyer pays)
     "items_keep": [],            # market names never listed, e.g. a skin you use
+    # your listings
+    "reprice_after_hours": 24,   # only reprice listings at least this old
+    "reprice_gap_cents": 2,      # ...and only when someone sells for more than this below yours
+    "cancel_after_days": 0,      # cancel listings unsold this long (0: never); they come back for review
+    "notify_sales": True,        # desktop notification when things sell
+    "set_budget_cents": 50,      # sets whose missing cards cost less than this are pointed out
 }
 MODES = ("auto", "review", "off")
 
@@ -44,7 +50,8 @@ def clean(patch):
             out[k] = bool(v)
         elif k == "games_at_once":
             out[k] = max(1, min(32, int(v)))
-        elif k in ("stall_minutes", "min_sell_cents", "items_min_cents"):
+        elif k in ("stall_minutes", "min_sell_cents", "items_min_cents", "reprice_after_hours", "reprice_gap_cents",
+                   "cancel_after_days", "set_budget_cents"):
             out[k] = max(0, int(v))
         elif k in ("sell", "gems", "items_new") and v in MODES:
             out[k] = v

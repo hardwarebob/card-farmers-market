@@ -8,7 +8,7 @@ import threading
 import time
 import traceback
 
-from . import qr, rules, steam, update
+from . import market, qr, rules, steam, update
 from .auth import Session
 from .idler import Idler, game_you_are_playing, steam_pid
 
@@ -30,10 +30,11 @@ def fresh_state():
             "owed": {},      # appid -> [when] for card drops the badges page showed, not yet matched to a card
             "unexplained": {},  # asset id -> when a new card was first seen that no drop explained yet
             "steamid": None,
-            "items": {"inventories": [], "review": [], "seen": {}, "checked": 0}}
+            "items": {"inventories": [], "review": [], "seen": {}, "checked": 0},
+            **market.market_state()}
 
 
-class Farm:
+class Farm(market.MarketParts):
     def __init__(self, data_dir):
         self.data = data_dir
         os.makedirs(data_dir, exist_ok=True)
@@ -55,7 +56,9 @@ class Farm:
         self.status = "starting"
         self.error = None
         self.signin_error = None
-        self.busy = set()  # long jobs running for the page: "cards", "items"
+        self.busy = set()  # long jobs running for the page: "cards", "items", "listings", ...
+        self.progress = {}  # job -> what it's doing, for the page
+        self._next_sales = self._next_listings = 0
         self.notify = _notify
         self.on_quit = None  # set by the window: closes Card Farm (after an update is handed over)
         self.update, self._next_update = None, 0
@@ -186,6 +189,15 @@ class Farm:
         if s["items_new"] != "off" and time.time() >= self._next_items:
             self._next_items = time.time() + ITEMS_EVERY
             self._check_items(manual=False)
+        if time.time() >= self._next_sales:
+            self._next_sales = time.time() + market.SALES_EVERY
+            try:
+                self._sync_sales()
+            except Exception as e:
+                print(f"Sales check failed: {e}", flush=True)
+        if s["cancel_after_days"] and time.time() >= self._next_listings:
+            self._next_listings = time.time() + market.LISTINGS_EVERY
+            self.check_listings()
         if not s["farming"]:
             return self._idle_none("Stopped")
         pid = steam_pid()
@@ -203,6 +215,7 @@ class Farm:
             self._starting("Reading your badges…")
             dropped = self._refresh_badges()
             self._next_badges = now + BADGES_EVERY
+        self._count_idle_time()
         self._check_stalls()
         self._choose_games()  # idling first: the inventory and prices can take a while
         if dropped or now >= self._next_inventory:  # read right after fresh badges, to tell drops apart
@@ -374,6 +387,7 @@ class Farm:
                 if owed:
                     self.state["owed"][key] = owed[1:]
                     self.state["stats"]["drops"] += 1
+                    self._farmed_one(card["appid"])
         with self.lock:
             self.state["seen"] = sorted((seen & ids) | handled)
             self.state["unexplained"] = {a: t for a, t in self.state["unexplained"].items() if a in ids}
@@ -570,7 +584,7 @@ class Farm:
                 self._jobs.clear()
                 continue
             e = job["entry"]
-            what = e["card"]["name"] if e["kind"] == "card" else e["item"]["name"]
+            what = _label(e)
             try:
                 listed += self._do(job["action"], e)
             except steam.HttpError as err:
@@ -594,6 +608,14 @@ class Farm:
     def _do(self, action, e):
         """Prices are looked up again here (from the few-hours cache), so a card that waited days
         for review isn't listed at an old price."""
+        if e["kind"] == "listing":
+            return self._do_listing(action, e)
+        if e["kind"] == "gems":
+            return self._do_pack(e)
+        if e["kind"] == "booster":
+            return self._do_booster(e)
+        if e["kind"] == "set":
+            return self._do_set(e)
         if e["kind"] == "item":
             it = e["item"]
             buyer = rules.asking_price(self.prices.item(it["appid"], it["hash"]), self.settings)
@@ -640,12 +662,13 @@ class Farm:
                 "signed_in": self.session.signed_in, "account": self.session.account,
                 "qr_svg": self._qr(), "signin_error": self.signin_error,
                 "status": self.status, "error": self.error, "working": len(st["queue"]),
-                "busy": sorted(self.busy),
+                "busy": sorted(self.busy), "progress": dict(self.progress),
                 "settings": self.settings,
                 "idling": [{"appid": int(a), "name": self._name(int(a)), "since": i["since"],
                             "last_drop": i.get("last_drop")} for a, i in st["idling"].items()],
                 "games": [dict(g, value=self._game_value(g["appid"]), keep=g["appid"] in keep,
-                               skipped=st["skipped"].get(str(g["appid"]), 0) > now)
+                               skipped=st["skipped"].get(str(g["appid"]), 0) > now,
+                               idled=st["idled"].get(str(g["appid"]), 0), farmed=st["farmed"].get(str(g["appid"]), 0))
                           for g in self._candidates(with_skipped=True)] if self.session.signed_in else [],
                 "kept_games": [{"appid": a, "name": names.get(a, str(a))} for a in sorted(keep)],
                 "drops_left": sum(g["drops"] for g in st["games"]),
@@ -655,6 +678,9 @@ class Farm:
                           "review": st["items"]["review"], "checked": st["items"]["checked"]},
                 "ui": _page_version(), "version": update.VERSION,
                 "update": self.update and dict(self.update, installable=bool(self.update.get("url"))),
+                "listings": st["listings"], "sales": self.sales_summary(), "gems": st["gems"],
+                "boosters": dict(st["boosters"], options=[o for o in st["boosters"]["options"] if o["profit"] > -999][:150]),
+                "sets": st["sets"],
             }
 
     def _qr(self):
@@ -697,6 +723,14 @@ class Farm:
 def _owed_list(value):
     """Drop counts saved by older versions were plain numbers."""
     return list(value) if isinstance(value, list) else [time.time()] * int(value or 0)
+
+
+def _label(e):
+    """What a queued job is about, for the tape."""
+    kind = e["kind"]
+    return {"card": lambda: e["card"]["name"], "item": lambda: e["item"]["name"], "listing": lambda: e["listing"]["name"],
+            "gems": lambda: "gems", "booster": lambda: f"{e['booster']['name']} booster pack",
+            "set": lambda: f"the {e['offer']['game']} set"}[kind]()
 
 
 def _page_version():

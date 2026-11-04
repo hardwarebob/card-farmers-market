@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from cardfarm import api, farm as farm_mod, idler, qr, rules, steam
+from cardfarm import api, farm as farm_mod, idler, market as market_mod, qr, rules, steam
 
 HERE = pathlib.Path(__file__).parent
 
@@ -400,3 +400,101 @@ def test_app_update_swaps_the_app_after_card_farm_exits(tmp_path):
     update.install(package, relaunch=False, wait_for=waiter.pid, target=str(old_app)).wait(120)
     logs = "\n".join(f"{p.name}: {p.read_text(errors='replace')}" for p in pathlib.Path(package).parent.glob("update*.log"))
     assert (old_app / marker).read_text() == "new", logs or "no logs"
+
+
+# --- market, gems, boosters, sets -------------------------------------------------------------
+def test_sales_are_read_from_market_history():
+    page = {"events": [{"listingid": "L1", "purchaseid": "P1", "event_type": 3, "time_event": 1000},
+                       {"listingid": "L2", "purchaseid": "P2", "event_type": 1, "time_event": 900}],
+            "purchases": {"L1_P1": {"received_amount": 9}},
+            "listings": {"L1": {"asset": {"appid": 753, "contextid": "6", "id": "A1"}}},
+            "assets": {"753": {"6": {"A1": {"market_name": "Hero", "market_hash_name": "10-Hero",
+                                            "type": "Game Trading Card", "market_fee_app": 10}}}}}
+    assert steam.parse_sales(page) == [{"at": 1000, "listingid": "L1", "name": "Hero", "hash": "10-Hero",
+                                        "game": "Game Trading Card", "appid": 10, "received": 9}]
+
+
+def test_set_and_booster_pages_are_read():
+    set_page = ('<div class="badge_info_title">x</div> Level 2 Game Badge - 3 of 5 cards collected '
+                '<div class="badge_card_set_card owned"><div class="badge_card_set_text_qty">(2)</div>'
+                '<div class="badge_card_set_text badge_card_set_title ellipsis"> <span class="badge_card_set_text_qty">(2)</span> Hero &amp; Co <div></div></div></div>'
+                '<div class="badge_card_set_card unowned"><div class="badge_card_set_text badge_card_set_title ellipsis"> Villain <div></div></div></div>')
+    assert steam.parse_set_page(set_page) == {"level": 2, "cards": [{"name": "Hero & Co", "owned": 2}, {"name": "Villain", "owned": 0}]}
+    booster_page = ('CBoosterCreatorPage.Init(\n [{"appid":10,"name":"Game","series":1,"price":"600"},'
+                    '{"appid":11,"name":"Other","series":1,"price":"400","unavailable":true,"available_at_time":"Nov 4"}],\n'
+                    ' parseFloat( "1238" ),\n parseFloat( "1000" ),\n parseFloat( "238" ), "<div>")')
+    boosters, tradable = steam.parse_booster_page(booster_page)
+    assert tradable == 1000 and boosters[0] == {"appid": 10, "name": "Game", "series": 1, "gems": 600,
+                                                "unavailable": False, "available_at": ""}
+    assert boosters[1]["unavailable"] and boosters[1]["available_at"] == "Nov 4"
+
+
+def listing(**kw):
+    return dict({"listingid": "L1", "assetid": "A1", "appid": 753, "context": 6, "hash": "10-Hero", "name": "Hero",
+                 "game": "Game Trading Card", "icon": "", "classid": "C", "instanceid": "0", "receive": 17, "buyer": 20,
+                 "created": time.time() - 3 * 86400}, **kw)
+
+
+def test_only_old_undercut_listings_are_repriced(world):
+    f = world["make"]()
+    now = time.time()
+    assert f._verdict(listing(), 19, now) == "ok"                                   # within the 2c gap
+    assert f._verdict(listing(), 15, now) == "undercut"
+    assert f._verdict(listing(created=now - 3600), 15, now) == "young"              # listed an hour ago
+    assert f._verdict(listing(), None, now) == "ok"
+
+
+def test_repricing_cancels_and_relists_at_todays_price(world, monkeypatch):
+    f = world["make"]()
+    removed, stock = [], [[({"assetid": "X", "classid": "Z", "instanceid": "0"}, {})]]
+    monkeypatch.setattr(steam, "remove_listing", lambda s, lid: (removed.append(lid), stock.append(
+        stock[0] + [({"assetid": "A9", "classid": "C", "instanceid": "0"}, {})])))
+    monkeypatch.setattr(steam, "_inventory", lambda s, a, c: stock[-1])
+    monkeypatch.setattr(market_mod.time, "sleep", lambda x: None)
+    f.prices.game_cards = lambda appid: {"10-Hero": 15}
+    f.state["listings"]["items"] = [listing(verdict="undercut"), listing(listingid="c", verdict="ok")]
+    f.decide_listings("undercut", "reprice")
+    assert [j["entry"]["id"] for j in f.state["queue"]] == ["L1"]   # only the undercut one
+    f._do_listing("reprice", {"listing": listing()})
+    assert removed == ["L1"] and world["sold"] == [("A9", rules.received(15))] and "A9" in f.state["seen"]
+
+
+def test_boosters_worth_making(world):
+    f = world["make"]()
+    f.prices.gem_sack = lambda: 69
+    o = f._booster_offer({"appid": 10, "name": "Game", "series": 1, "gems": 600, "unavailable": False, "lowest": 60})
+    assert o["receive"] == rules.received(60) and o["cost"] == round(600 * 69 / 1000 / 1.15, 1) and o["profit"] > 0
+    assert f._booster_offer({"appid": 11, "name": "Cheap", "series": 1, "gems": 1200, "unavailable": False,
+                             "lowest": 20})["profit"] < 0
+
+
+def test_sets_you_hold_part_of_are_offered(world, monkeypatch):
+    f = world["make"]()
+    monkeypatch.setattr(steam, "cards_in_inventory", lambda s: [card(assetid="1", hash="10-A"), card(assetid="2", hash="10-B")])
+    f.prices.game_cards = lambda appid: {"10-A": 5, "10-B": 6, "10-C": 7, "10-A (Foil)": 90}
+    f._check_sets()
+    (offer,) = f.state["sets"]["offers"]
+    assert (offer["have"], offer["of"], offer["missing"], offer["cost"]) == (2, 3, ["C"], 7)
+    with pytest.raises(ValueError):
+        f.finish_set(10)                          # a card is still missing: nothing to craft
+
+
+def test_idle_time_and_drops_add_up_per_game(world):
+    f = world["make"]()
+    f.state["idling"] = {"10": {}}
+    f._last_idle_count = time.time() - 60
+    f._count_idle_time()
+    f._farmed_one(10)
+    assert 59 <= f.state["idled"]["10"] <= 61 and f.state["farmed"]["10"] == 1
+
+
+def test_steam_hiccups_are_retried(monkeypatch):
+    calls = []
+    monkeypatch.setattr(steam.time, "sleep", lambda x: None)
+
+    def flaky():
+        calls.append(1)
+        if len(calls) < 3:
+            raise steam.HttpError(500)
+        return "ok"
+    assert steam._patient(flaky) == "ok" and len(calls) == 3

@@ -33,7 +33,7 @@ def request(url, data=None, cookies=None, headers=None, timeout=30):
     if data is not None:
         config.append(f"data-binary = {_quoted(urllib.parse.urlencode(data))}")
     # -c: keep cookies Steam sets on the way (the inventory page redirects through a cookie check)
-    cmd = ["curl", "-s", "-L", "-c", os.devnull, "--max-time", str(timeout), "-A", UA, "-w", "\n%{http_code}", "-K", "-"]
+    cmd = ["curl", "-s", "-L", "--compressed", "-c", os.devnull, "--max-time", str(timeout), "-A", UA, "-w", "\n%{http_code}", "-K", "-"]
     out = subprocess.run(cmd, input="\n".join(config).encode() + b"\n",
                          capture_output=True, timeout=timeout + 10, **QUIET).stdout.decode("utf-8", "replace")
     body, _, status = out.rpartition("\n")

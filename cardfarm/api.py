@@ -49,6 +49,28 @@ def route(farm, path, body):
         return farm.skip(int(body["appid"]))
     if path == "/api/unskip":
         return farm.unskip(int(body["appid"]))
+    if path == "/api/listings/check":
+        return farm.check_listings()
+    if path == "/api/listings":  # {"ids": [...] | "undercut", "action": reprice|cancel}
+        if body.get("action") not in ("reprice", "cancel"):
+            raise ValueError("unknown action")
+        ids = body.get("ids")
+        return farm.decide_listings(ids if ids == "undercut" else set(map(str, ids or [])), body["action"])
+    if path == "/api/gems/check":
+        return farm.check_gems()
+    if path == "/api/gems/pack":
+        return farm.pack_gems()
+    if path == "/api/gems/sell":
+        return farm.sell_sacks()
+    if path == "/api/boosters/check":
+        return farm.check_boosters()
+    if path == "/api/boosters/make":  # {"appids": [...] | "profitable"}
+        a = body.get("appids")
+        return farm.make_boosters(a if a == "profitable" else [int(x) for x in a or []])
+    if path == "/api/sets/check":
+        return farm.check_sets()
+    if path == "/api/sets/finish":
+        return farm.finish_set(int(body["appid"]))
     if path == "/api/update":
         return farm.install_update()
     if path == "/api/refresh":
