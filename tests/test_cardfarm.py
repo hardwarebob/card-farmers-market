@@ -692,3 +692,17 @@ def test_a_booster_unpacks_a_sack_when_loose_gems_fall_short(world, monkeypatch)
     with pytest.raises(RuntimeError, match="stop here"):
         f._do_booster({"booster": {"appid": 1, "name": "G", "series": 1, "gems": 600}})
     assert unpacked == [("S1", True)]
+
+
+def test_a_game_that_never_drops_when_idled_is_set_aside_for_a_week(world):
+    f = world["make"]()
+    f.update_settings({"stall_minutes": 90})
+    f.state["games"] = [{"appid": 730, "name": "CS2", "drops": 14, "earned": 65}]
+    f.state["idled"] = {"730": 7 * 3600}
+    f.state["idling"] = {"730": {"since": 0, "clock": 0, "last_drop": None, "restarts": 1}}
+    f._check_stalls()
+    assert f.state["no_idle"]["730"] > time.time() + 6 * 86400 and "730" not in f.state["skipped"]
+    assert f.snapshot()["games"][0]["no_idle"] and f._candidates() == []
+    world["badges"] = [{"appid": 730, "name": "CS2", "drops": 13, "earned": 65}]   # you played it: a drop
+    f._refresh_badges()
+    assert "730" not in f.state["no_idle"]

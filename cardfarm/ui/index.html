@@ -551,12 +551,12 @@ function renderReview(list) {
 }
 
 function renderGames(games, kept) {
-  fill($("#games"), games.length ? games.map(g => `<tr class="${g.skipped ? "dim" : ""}">
-    <td>${esc(g.name)}${g.skipped ? '<span class="tag">skipped</span>' : ""}${g.keep ? '<span class="tag">kept</span>' : ""}</td>
+  fill($("#games"), games.length ? games.map(g => `<tr class="${g.skipped || g.no_idle ? "dim" : ""}">
+    <td>${esc(g.name)}${g.no_idle ? '<span class="tag" title="No drop in hours of idling: free-to-play games like CS2 drop cards when you play them yourself">doesn\'t drop when idled</span>' : g.skipped ? '<span class="tag">skipped</span>' : ""}${g.keep ? '<span class="tag">kept</span>' : ""}</td>
     <td class="r num">${g.drops}</td><td class="r num hide-sm">${g.earned - g.drops} / ${g.earned}</td>
     <td class="r num hide-sm" title="idled ${hours(g.idled)}">${g.farmed ? Math.round(g.idled / 60 / g.farmed) + " min" : g.idled > 60 ? '<span class="faint">' + hours(g.idled) + "</span>" : "–"}</td>
     <td class="r num">${g.value == null ? '<span class="faint">…</span>' : money(Math.round(g.value))}</td>
-    <td class="acts"><button class="link" data-app="${g.appid}" data-skip="${g.skipped ? 0 : 1}">${g.skipped ? "Unskip" : "Skip"}</button><button class="link" data-keep-game="${g.appid}">${g.keep ? "Sell its cards" : "Keep its cards"}</button></td>
+    <td class="acts"><button class="link" data-app="${g.appid}" data-skip="${g.skipped || g.no_idle ? 0 : 1}">${g.no_idle ? "Try again" : g.skipped ? "Unskip" : "Skip"}</button><button class="link" data-keep-game="${g.appid}">${g.keep ? "Sell its cards" : "Keep its cards"}</button></td>
   </tr>`).join("") : `<tr><td colspan="6" class="empty">No games with card drops left.</td></tr>`);
   fill($("#kept-games"), kept.length ? kept.map(g => `<button class="chip" data-unkeep-game="${g.appid}" title="Stop keeping">${esc(g.name)}<span class="x">×</span></button>`).join("")
     : '<span class="none">none</span>');

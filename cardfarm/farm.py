@@ -17,6 +17,8 @@ INVENTORY_EVERY = 30 * 60
 ITEMS_EVERY = 60 * 60
 UPDATE_EVERY = 6 * 3600
 SKIP_FOR = 12 * 3600
+NO_IDLE_FOR = 7 * 24 * 3600  # a game that never drops while idled (free-to-play ones like CS2) waits this long
+NO_IDLE_AFTER = 6 * 3600     # ...judged after this much idling without a single drop
 EXPLAIN_WAIT = 20 * 60  # the badges page shows a drop a minute or two after the inventory does
 OWED_FOR = 2 * 3600     # a drop count no card turned up for is forgotten after this
 
@@ -30,6 +32,7 @@ def fresh_state():
             "owed": {},      # appid -> [when] for card drops the badges page showed, not yet matched to a card
             "unexplained": {},  # asset id -> when a new card was first seen that no drop explained yet
             "steamid": None,
+            "no_idle": {},   # appid -> until when: games that don't drop cards while idled
             "items": {"inventories": [], "review": [], "seen": {}, "checked": 0},
             **market.market_state()}
 
@@ -256,6 +259,7 @@ class Farm(market.MarketParts):
                           (g["earned"] - g["drops"]) - (before["earned"] - before["drops"]))
                 if got > 0:
                     owed[str(g["appid"])] = _owed_list(owed.get(str(g["appid"]))) + [time.time()] * got
+                    self.state.get("no_idle", {}).pop(str(g["appid"]), None)  # it drops after all
                     dropped = True
                     info = self.state["idling"].get(str(g["appid"]))
                     if info:
@@ -266,7 +270,8 @@ class Farm(market.MarketParts):
     def _candidates(self, with_skipped=False):
         now, s = time.time(), self.settings
         with self.lock:
-            skipped = {int(a) for a, until in self.state["skipped"].items() if until > now}
+            skipped = {int(a) for a, until in list(self.state["skipped"].items()) + list(self.state.get("no_idle", {}).items())
+                       if until > now}
             games = [g for g in self.state["games"] if g["drops"] > 0 and (with_skipped or g["appid"] not in skipped)]
         if s["order"] == "most":
             games.sort(key=lambda g: -g["drops"])
@@ -328,12 +333,20 @@ class Farm(market.MarketParts):
                 else:
                     give_up.append(appid)
                     self.state["idling"].pop(appid)
-                    self.state["skipped"][appid] = time.time() + SKIP_FOR
+                    never = not self.state["farmed"].get(appid) and self.state["idled"].get(appid, 0) >= NO_IDLE_AFTER
+                    if never:
+                        self.state.setdefault("no_idle", {})[appid] = time.time() + NO_IDLE_FOR
+                    else:
+                        self.state["skipped"][appid] = time.time() + SKIP_FOR
         for appid in restart:
             self.log(f"No drop from {self._name(int(appid))} in {limit // 60} min; restarting it", "warn")
             self.idler.stop(int(appid))  # _choose_games starts it again
         for appid in give_up:
-            self.log(f"{self._name(int(appid))} still isn't dropping; trying other games for 12 h", "warn")
+            if appid in self.state.get("no_idle", {}):
+                self.log(f"{self._name(int(appid))} hasn't dropped a card in {self.state['idled'][appid] / 3600:.0f} h of idling; "
+                         "setting it aside for 7 days (free-to-play games like CS2 drop cards when you play them yourself)", "warn")
+            else:
+                self.log(f"{self._name(int(appid))} still isn't dropping; trying other games for 12 h", "warn")
             self.idler.stop(int(appid))
 
     def _price_one_game(self):
@@ -676,6 +689,7 @@ class Farm(market.MarketParts):
                             "last_drop": i.get("last_drop")} for a, i in st["idling"].items()],
                 "games": [dict(g, value=self._game_value(g["appid"]), keep=g["appid"] in keep,
                                skipped=st["skipped"].get(str(g["appid"]), 0) > now,
+                               no_idle=st.get("no_idle", {}).get(str(g["appid"]), 0) > now,
                                idled=st["idled"].get(str(g["appid"]), 0), farmed=st["farmed"].get(str(g["appid"]), 0))
                           for g in self._candidates(with_skipped=True)] if self.session.signed_in else [],
                 "kept_games": [{"appid": a, "name": names.get(a, str(a))} for a in sorted(keep)],
@@ -722,6 +736,7 @@ class Farm(market.MarketParts):
     def unskip(self, appid):
         with self.lock:
             self.state["skipped"].pop(str(appid), None)
+            self.state.get("no_idle", {}).pop(str(appid), None)
         self.poke()
 
     def skip(self, appid):
