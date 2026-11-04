@@ -9,6 +9,7 @@ DEFAULTS = {
     "order": "value",            # value: priciest cards first | most: most drops left | fewest: closest to done
     "pause_when_playing": True,  # step aside while you play something yourself
     "stall_minutes": 90,         # no drop for this long: restart the idler, then move on (0: never)
+    "skip_free_to_play": True,   # free-to-play games (CS2) drop cards for in-game purchases while played, not idled
     "sell": "auto",              # auto: list it | review: ask first | off: never sell
     "gems": "review",            # auto | review | off
     "pricing": "match",          # match the lowest listing, or undercut it by a cent

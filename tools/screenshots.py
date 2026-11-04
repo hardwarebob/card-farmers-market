@@ -74,10 +74,13 @@ def demo(farm):
              "Sky Ledger", "Bramble Keep"]
     st["games"] = [{"appid": 1000 + i, "name": n, "drops": rnd.randint(1, 5), "earned": 5} for i, n in enumerate(names)]
     st["games"].append({"appid": 730, "name": "Counter-Strike 2", "drops": 14, "earned": 65})
+    st["games"].append({"appid": 2000, "name": "Pocket Arena", "drops": 6, "earned": 6})
     st["idling"] = {str(1000 + i): {"since": now - 3600 * (i + 1), "clock": now - 1800, "last_drop": now - 1200 if i == 0 else None,
                                     "restarts": 0} for i in range(3)}
     st["skipped"] = {"1006": now + 3600}
     st["no_idle"] = {"730": now + 6 * 86400}
+    st["skipped_by_you"] = ["1007"]
+    st["free_to_play"] = {"730": True, "2000": True, **{str(1000 + i): False for i in range(len(names))}}
     st["idled"] = {str(1000 + i): 3600 * (2 + i) for i in range(5)}
     st["farmed"] = {"1000": 3, "1001": 1, "1002": 2}
     farm.settings["never_touch"] = [1004]

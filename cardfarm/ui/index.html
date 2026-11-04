@@ -59,6 +59,11 @@ main { max-width: 1180px; margin: 0 auto; padding: 0 20px 64px; }
 .ticker .label { background: var(--signal); color: var(--signal-ink); padding: 9px 12px; letter-spacing: .12em; white-space: nowrap; }
 .ticker .text { padding: 9px 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
 .ticker.paused .label { background: var(--faint); color: var(--paper); }
+.ticker .farm { font: 800 15px/1 var(--head); font-stretch: condensed; letter-spacing: .08em; border: 0; padding: 0 20px;
+  background: var(--paper); color: var(--ink); white-space: nowrap; border: 1px solid var(--ink); }
+.ticker .farm.start { background: var(--signal); border-color: var(--signal); color: var(--signal-ink); }
+.ticker .farm:hover:not(:disabled) { background: var(--signal); border-color: var(--signal); color: var(--signal-ink); }
+.ticker .farm.start:hover:not(:disabled) { background: var(--paper); border-color: var(--ink); color: var(--ink); }
 .alert { margin-top: 8px; padding: 8px 12px; border-left: 4px solid var(--warn); color: var(--warn); background: var(--sheet); font-size: 13px; }
 
 /* section heads */
@@ -220,7 +225,7 @@ td.acts a:hover { color: var(--signal); }
   </div>
 
   <div id="app" hidden>
-    <div class="ticker" id="ticker"><span class="label" id="ticker-label">NOW</span><span class="text" id="status">…</span></div>
+    <div class="ticker" id="ticker"><span class="label" id="ticker-label">NOW</span><span class="text" id="status">…</span><button id="farm-toggle" class="farm"></button></div>
     <div class="alert" id="error" hidden></div>
 
     <div id="tab-panel-cards">
@@ -258,7 +263,6 @@ td.acts a:hover { color: var(--signal); }
       <div class="head"><h2><i>02</i>Rules</h2></div>
       <div class="sheet">
         <div>
-          <div class="line"><span>Farming</span><button class="toggle" data-key="farming"></button></div>
           <div class="line"><span>Sell new cards</span>
             <span class="pick" data-key="sell"><button data-v="auto">Auto</button><button data-v="review">Review</button><button data-v="off">Off</button></span></div>
           <div class="line"><span>Gems from new cards</span>
@@ -269,6 +273,7 @@ td.acts a:hover { color: var(--signal); }
             <span class="pick" data-key="foils"><button data-v="sell">Sell</button><button data-v="keep">Keep</button></span></div>
           <div class="line"><span>Gems instead below<small>cents, what a buyer pays</small></span>
             <input type="number" min="0" data-key="min_sell_cents"></div>
+          <div class="line"><span>Tell me about listings to confirm</span><button class="toggle" data-key="notify"></button></div>
         </div>
         <div>
           <div class="line"><span>Pause while I play</span><button class="toggle" data-key="pause_when_playing"></button></div>
@@ -278,7 +283,8 @@ td.acts a:hover { color: var(--signal); }
             <span class="pick" data-key="games_at_once"><button data-v="1">1</button><button data-v="2">2</button><button data-v="4">4</button><button data-v="8">8</button><button data-v="32">32</button></span></div>
           <div class="line"><span>Restart a game after<small>minutes without a drop; 0 never</small></span>
             <input type="number" min="0" data-key="stall_minutes"></div>
-          <div class="line"><span>Tell me about listings to confirm</span><button class="toggle" data-key="notify"></button></div>
+          <div class="line"><span>Skip free-to-play games<small>like CS2: they drop cards while you play, not idled</small></span>
+            <button class="toggle" data-key="skip_free_to_play"></button></div>
         </div>
         <div class="line wide"><span>Keep every card from<small>for sets you're crafting; mark games below</small></span>
           <span class="chips" id="kept-games"></span></div>
@@ -286,7 +292,7 @@ td.acts a:hover { color: var(--signal); }
     </section>
 
     <section>
-        <div class="head"><h2><i>03</i>Games with drops</h2><div class="tools"><button id="refresh">Check now</button></div></div>
+        <div class="head"><h2><i>03</i>Games with drops</h2><div class="tools"><button id="unskip-all" hidden>Unskip all</button><button id="refresh">Check now</button></div></div>
         <div class="scroll">
           <table>
             <thead><tr><th>Game</th><th class="r">Left</th><th class="r hide-sm">Dropped</th><th class="r hide-sm" title="Time spent idling it, per card it dropped">Per card</th><th class="r">Avg card</th><th></th></tr></thead>
@@ -613,13 +619,21 @@ function renderReview(list) {
 }
 
 function renderGames(games, kept) {
-  fill($("#games"), games.length ? games.map(g => `<tr class="${g.skipped || g.no_idle ? "dim" : ""}">
-    <td>${esc(g.name)}${g.no_idle ? '<span class="tag" title="No drop in hours of idling: free-to-play games like CS2 drop cards when you play them yourself">doesn\'t drop when idled</span>' : g.skipped ? '<span class="tag">skipped</span>' : ""}${g.keep ? '<span class="tag">kept</span>' : ""}</td>
+  const out = g => g.skipped || g.no_idle || g.free_skipped;
+  $("#unskip-all").hidden = !games.some(out);
+  fill($("#games"), games.length ? games.map(g => {
+    const why = g.skipped_by_you ? ["skipped", "You skipped it", "Unskip"]
+      : g.no_idle ? ["doesn't drop when idled", "No drop in hours of idling: set aside for a week", "Try again"]
+      : g.free_skipped ? ["free to play", "Free-to-play games like CS2 drop cards for in-game purchases, while you play them yourself", "Try"]
+      : g.skipped ? ["not dropping", "No drop even after a restart: set aside for 12 hours", "Unskip"] : null;
+    return `<tr class="${why ? "dim" : ""}">
+    <td>${esc(g.name)}${why ? `<span class="tag" title="${why[1]}">${why[0]}</span>` : ""}${g.keep ? '<span class="tag">kept</span>' : ""}</td>
     <td class="r num">${g.drops}</td><td class="r num hide-sm">${g.earned - g.drops} / ${g.earned}</td>
     <td class="r num hide-sm" title="idled ${hours(g.idled)}">${g.farmed ? hours(g.idled / g.farmed) : g.idled > 60 ? '<span class="faint">' + hours(g.idled) + "</span>" : "–"}</td>
     <td class="r num">${g.value == null ? '<span class="faint">…</span>' : money(Math.round(g.value))}</td>
-    <td class="acts"><button class="link" data-app="${g.appid}" data-skip="${g.skipped || g.no_idle ? 0 : 1}">${g.no_idle ? "Try again" : g.skipped ? "Unskip" : "Skip"}</button><button class="link" data-keep-game="${g.appid}">${g.keep ? "Stop keeping" : "Keep cards"}</button></td>
-  </tr>`).join("") : `<tr><td colspan="6" class="empty">No games with card drops left.</td></tr>`);
+    <td class="acts"><button class="link" data-app="${g.appid}" data-skip="${why ? 0 : 1}">${why ? why[2] : "Skip"}</button><button class="link" data-keep-game="${g.appid}">${g.keep ? "Stop keeping" : "Keep cards"}</button></td>
+  </tr>`;
+  }).join("") : `<tr><td colspan="6" class="empty">No games with card drops left.</td></tr>`);
   fill($("#kept-games"), kept.length ? kept.map(g => `<button class="chip" data-unkeep-game="${g.appid}" title="Stop keeping">${esc(g.name)}<span class="x">×</span></button>`).join("")
     : '<span class="none">none</span>');
 }
@@ -861,9 +875,11 @@ function render(s) {
     return;
   }
   renderTabs();
-  const farming = s.idling.length > 0;
+  const farming = s.idling.length > 0, on = s.settings.farming;
   $("#ticker").classList.toggle("paused", !farming);
-  $("#ticker-label").textContent = farming ? "FARMING" : "IDLE";
+  $("#ticker-label").textContent = farming ? "FARMING" : on ? "IDLE" : "STOPPED";
+  $("#farm-toggle").textContent = on ? "Stop farming" : "Start farming";
+  $("#farm-toggle").classList.toggle("start", !on);
   $("#status").textContent = (s.status === "starting" ? "Starting…" : s.status) + (s.working ? `  ·  ${s.working} to list or turn into gems` : "");
   fill($("#now"), s.idling.map(i => `${esc(i.name)} — on it ${ago(i.since)}, ${i.last_drop ? "last drop " + ago(i.last_drop) + " ago" : "no drop yet"}`).join("<br>"));
   $("#error").hidden = !s.error;
@@ -947,6 +963,8 @@ $("#quit").hidden = !BRIDGE;
 $("#quit").onclick = () => confirm("Quit Card Farmer's Market? Farming stops until you open it again.") && call("POST", "/api/quit");
 $("#signout").onclick = () => confirm("Sign out of Steam? Farming stops.") && post("/api/sign-out");
 $("#refresh").onclick = () => post("/api/refresh");
+$("#unskip-all").onclick = () => post("/api/unskip", {appid: "all"});
+$("#farm-toggle").onclick = () => setting("farming", !state.settings.farming);
 $("#review-existing").onclick = () => post("/api/review-existing");
 $("#check-items").onclick = () => post("/api/items/check");
 $("#do-suggested").onclick = () => confirm(`Do the suggestion for all ${state.review.length} cards? Gems can't be undone.`)

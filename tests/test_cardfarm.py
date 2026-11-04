@@ -789,3 +789,71 @@ def test_new_download_names_are_preferred_and_old_ones_still_found():
     assert update.newest([new], "v0.3.0-beta.9", "pyz")["url"].endswith("/card-farmers-market.pyz")
     old = release("v0.4.0", names=("Card-Farm-Windows.zip",))
     assert update.newest([old], "v0.3.0-beta.9", "windows")["url"].endswith("/Card-Farm-Windows.zip")
+
+
+def test_a_web_sign_in_is_renewed_the_way_a_browser_does_it(tmp_path, monkeypatch):
+    from cardfarm import auth
+    s = auth.Session(str(tmp_path / "session.json"))
+    s.steamid, s.refresh_token, s.access_token = "7656", "refresh", "old"
+    sent = []
+
+    def post_json(url, data, **kw):
+        sent.append(url)
+        if "GenerateAccessTokenForApp" in url:
+            return {"response": {}}  # what Steam answers for a web sign-in
+        assert data["nonce"] == "refresh"
+        return {"steamID": "7656", "transfer_info": [
+            {"url": "https://store.steampowered.com/login/settoken", "params": {"nonce": "a", "auth": "b"}},
+            {"url": "https://steamcommunity.com/login/settoken", "params": {"nonce": "c", "auth": "d"}}]}
+
+    def post_for_cookies(url, data):
+        assert url == "https://steamcommunity.com/login/settoken" and data == {"nonce": "c", "auth": "d", "steamID": "7656"}
+        return 200, '{"result":1}', {"steamLoginSecure": "7656%7C%7Cnew-token", "sessionid": "x"}
+
+    monkeypatch.setattr(auth, "post_json", post_json)
+    monkeypatch.setattr(auth, "post_for_cookies", post_for_cookies)
+    s.renew()
+    assert s.access_token == "new-token" and s.refresh_token == "refresh"
+    assert json.load(open(tmp_path / "session.json"))["access_token"] == "new-token"
+    assert sent[-1] == "https://login.steampowered.com/jwt/finalizelogin"
+
+
+def test_renewing_fails_clearly_when_steam_refuses_both_ways(tmp_path, monkeypatch):
+    from cardfarm import auth
+    s = auth.Session(str(tmp_path / "session.json"))
+    s.steamid, s.refresh_token = "7656", "refresh"
+    monkeypatch.setattr(auth, "post_json", lambda url, data, **kw: {"response": {}} if "Generate" in url else {"error": 8})
+    with pytest.raises(RuntimeError, match="sign in again"):
+        s.renew()
+
+
+def test_a_game_you_skip_stays_skipped_until_you_unskip_it(world, monkeypatch):
+    f = world["make"]()
+    f.state["games"] = [{"appid": 10, "name": "A", "drops": 3, "earned": 3}, {"appid": 11, "name": "B", "drops": 2, "earned": 2}]
+    f.skip(10)
+    later = time.time() + 30 * 86400
+    monkeypatch.setattr(farm_mod.time, "time", lambda: later)
+    assert [g["appid"] for g in f._candidates()] == [11]
+    f.unskip(10)
+    assert {g["appid"] for g in f._candidates()} == {10, 11}
+
+
+def test_free_to_play_games_are_skipped_unless_you_try_them(world, monkeypatch):
+    f = world["make"]()
+    f.state["games"] = [{"appid": 730, "name": "CS2", "drops": 14, "earned": 65}, {"appid": 11, "name": "B", "drops": 2, "earned": 2}]
+    monkeypatch.setattr(steam, "free_to_play", lambda appid: appid == 730)
+    monkeypatch.setattr(farm_mod.time, "sleep", lambda s: None)
+    f._learn_free_games()
+    assert f.state["free_to_play"] == {"730": True, "11": False}
+    assert [g["appid"] for g in f._candidates()] == [11]
+    shown = {g["appid"]: g for g in f.snapshot()["games"]}
+    assert shown[730]["free_skipped"] and not shown[11]["free_skipped"]
+    f.unskip(730)  # "Try"
+    assert {g["appid"] for g in f._candidates()} == {730, 11}
+    f.skip(730)
+    assert [g["appid"] for g in f._candidates()] == [11]
+    f.unskip_all()
+    assert {g["appid"] for g in f._candidates()} == {730, 11}
+    f.update_settings({"skip_free_to_play": False})
+    f.state["idle_anyway"] = []
+    assert {g["appid"] for g in f._candidates()} == {730, 11}

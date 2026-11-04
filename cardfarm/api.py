@@ -47,8 +47,8 @@ def route(farm, path, body):
         return farm.check_items()
     if path == "/api/skip":
         return farm.skip(int(body["appid"]))
-    if path == "/api/unskip":
-        return farm.unskip(int(body["appid"]))
+    if path == "/api/unskip":  # {"appid": n | "all"}
+        return farm.unskip_all() if body.get("appid") == "all" else farm.unskip(int(body["appid"]))
     if path == "/api/listings/check":
         return farm.check_listings()
     if path == "/api/listings":  # {"ids": [...] | "undercut", "action": reprice|cancel}

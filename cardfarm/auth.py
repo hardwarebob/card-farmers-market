@@ -7,10 +7,13 @@ import json
 import os
 import secrets
 import time
+import urllib.parse
 
-from .http import post_json
+from .http import post_for_cookies, post_json
 
 API = "https://api.steampowered.com/IAuthenticationService"
+LOGIN = "https://login.steampowered.com"
+COMMUNITY = "https://steamcommunity.com"
 
 
 def _claims(jwt):
@@ -78,13 +81,30 @@ class Session:
 
     # --- tokens -----------------------------------------------------------------------
     def renew(self):
+        """A new access token from the refresh token. Steam won't renew a web sign-in (the kind the
+        QR code makes) through its API, so that one is renewed the way a browser does it: the
+        refresh token buys a one-time pass at the login site, which steamcommunity.com trades
+        for a new steamLoginSecure cookie (holding the access token)."""
         r = post_json(f"{API}/GenerateAccessTokenForApp/v1/",
                       {"refresh_token": self.refresh_token, "steamid": self.steamid}).get("response", {})
-        if not r.get("access_token"):
+        token = r.get("access_token") or self._renew_like_a_browser()
+        if not token:
             raise RuntimeError("Steam wouldn't renew the sign-in; sign in again")
-        self.access_token = r["access_token"]
+        self.access_token = token
         self.refresh_token = r.get("refresh_token") or self.refresh_token
         self.save()
+
+    def _renew_like_a_browser(self):
+        r = post_json(f"{LOGIN}/jwt/finalizelogin",
+                      {"nonce": self.refresh_token, "sessionid": self.sessionid, "redir": f"{COMMUNITY}/login/home/?goto="},
+                      headers={"Origin": COMMUNITY, "Referer": f"{COMMUNITY}/"})
+        hop = next((t for t in r.get("transfer_info", []) if t.get("url", "").startswith(f"{COMMUNITY}/")), None)
+        if not hop:
+            return None
+        _, _, set_cookies = post_for_cookies(hop["url"], dict(hop["params"], steamID=r.get("steamID", self.steamid)))
+        value = urllib.parse.unquote(set_cookies.get("steamLoginSecure", ""))
+        steamid, _, token = value.partition("||")
+        return token if token and steamid == self.steamid else None
 
     def cookies(self):
         if not self.access_token or _claims(self.access_token).get("exp", 0) < time.time() + 3600:

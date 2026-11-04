@@ -8,7 +8,9 @@ Card Farmer's Market is a desktop app with its own window. It keeps farming in t
 ### Cards
 
 - **Native idling.** It tells your running Steam client that a game is playing, the way the game itself would, through Steam's own API library. No Wine, Proton or helper programs.
-- **Notices stalls.** It checks your badges page as it goes. A game that stops dropping cards gets restarted, then set aside for a while. Games that never drop while idled (Counter-Strike 2 is one) are set aside for a week. When Steam restarts, the games are started again.
+- **Start and stop at the top.** One button starts or stops farming; the bar beside it says what's going on.
+- **Notices stalls.** It checks your badges page as it goes. A game that stops dropping cards gets restarted, then set aside for a while. Games that never drop while idled are set aside for a week. When Steam restarts, the games are started again.
+- **Skips free-to-play games.** Free-to-play games like Counter-Strike 2 give card drops for in-game purchases, and those come while you play the game yourself, not while it's idled, so they're skipped unless you choose **Try** (or turn the rule off). A game you **Skip** stays skipped until you unskip it; **Unskip all** brings every game back.
 - **Sell or gems, decided per card.** Each card is priced against the market and against its gem value, using the current Sack of Gems price.
   - For selling and for gems separately, you choose **Auto**, **Review** (the card waits for you in the window) or **Off**.
   - You can also keep foils, keep every card from chosen games, set a minimum price, and match the lowest listing or undercut it by 1¢.
@@ -43,7 +45,7 @@ Pick a Steam level and a budget. It finds the cheapest badge crafts: sets you ho
 
 - **Pauses while you play.** When you launch a game from Steam, farming waits until you're done.
 - **Easy on Steam's market.** Prices are looked up while signed in, a few seconds apart, and kept for a while. If Steam still says "too many requests", market lookups pause (5, then 10, then 30 minutes) and the window says when they'll start again.
-- **Signs in by QR code** through the Steam mobile app. Card Farmer's Market never sees your password.
+- **Signs in by QR code** through the Steam mobile app, once: the sign-in renews itself for months. Card Farmer's Market never sees your password.
 - **Updates itself.** When a new version is out, an Update button appears at the top of the window.
 
 Market listings and purchases may need your OK in the Steam mobile app (Confirmations → Confirm all). Card Farmer's Market

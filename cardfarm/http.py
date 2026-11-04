@@ -41,6 +41,24 @@ def request(url, data=None, cookies=None, headers=None, timeout=30):
     return int(status or 0), body
 
 
+def post_for_cookies(url, data, timeout=30):
+    """POST a form and return (status, body, {name: value} of the cookies the reply sets)."""
+    config = f"url = {_quoted(url)}\ndata-binary = {_quoted(urllib.parse.urlencode(data))}\n"
+    cmd = ["curl", "-s", "-D", "-", "--compressed", "--max-time", str(timeout), "-A", UA, "-K", "-"]
+    out = subprocess.run(cmd, input=config.encode(), capture_output=True, timeout=timeout + 10,
+                         **QUIET).stdout.decode("utf-8", "replace")
+    head, _, body = out.replace("\r\n", "\n").partition("\n\n")
+    lines = head.split("\n")
+    status = int(lines[0].split()[1]) if lines and len(lines[0].split()) > 1 else 0
+    cookies = {}
+    for line in lines[1:]:
+        name, _, value = line.partition(":")
+        if name.strip().lower() == "set-cookie":
+            k, _, v = value.strip().split(";", 1)[0].partition("=")
+            cookies[k] = v
+    return status, body, cookies
+
+
 def download(url, path, timeout=600):
     """Save a file (following redirects); True when it arrived whole."""
     cmd = ["curl", "-s", "-L", "-f", "--max-time", str(timeout), "-A", UA, "-o", path, "-K", "-"]

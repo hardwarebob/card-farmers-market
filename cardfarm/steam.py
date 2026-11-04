@@ -57,6 +57,12 @@ def badges(session):
     return out
 
 
+def free_to_play(appid):
+    """Whether the store sells the game as free to play (a game the store no longer lists: False)."""
+    d = get_json(f"https://store.steampowered.com/api/appdetails?appids={appid}&filters=basic").get(str(appid)) or {}
+    return bool(d.get("success") and (d.get("data") or {}).get("is_free"))
+
+
 # --- inventories ----------------------------------------------------------------------------
 def tags(desc):
     return {t["category"]: t for t in desc.get("tags", [])}

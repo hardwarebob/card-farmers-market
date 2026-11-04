@@ -33,6 +33,9 @@ def fresh_state():
             "unexplained": {},  # asset id -> when a new card was first seen that no drop explained yet
             "steamid": None,
             "no_idle": {},   # appid -> until when: games that don't drop cards while idled
+            "skipped_by_you": [],  # appids you skipped: left alone until you unskip them
+            "free_to_play": {},    # appid -> whether the store calls it free to play (looked up once)
+            "idle_anyway": [],     # free-to-play appids you chose to idle all the same
             "items": {"inventories": [], "review": [], "seen": {}, "checked": 0},
             **market.market_state()}
 
@@ -225,6 +228,7 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
             self._starting("Reading your badges…")
             dropped = self._refresh_badges()
             self._next_badges = now + BADGES_EVERY
+            self._learn_free_games()
         self._count_idle_time()
         self._check_stalls()
         self._choose_games()  # idling first: the inventory and prices can take a while
@@ -277,7 +281,7 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
         now, s = time.time(), self.settings
         with self.lock:
             skipped = {int(a) for a, until in list(self.state["skipped"].items()) + list(self.state.get("no_idle", {}).items())
-                       if until > now}
+                       if until > now} | {int(a) for a in self.state.get("skipped_by_you", [])} | self._free_skipped()
             games = [g for g in self.state["games"] if g["drops"] > 0 and (with_skipped or g["appid"] not in skipped)]
         if s["order"] == "most":
             games.sort(key=lambda g: -g["drops"])
@@ -286,6 +290,31 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
         else:
             games.sort(key=lambda g: -(self._game_value(g["appid"]) or 0))
         return games
+
+    def _free_skipped(self):
+        """Free-to-play games left out by the "skip free-to-play games" rule."""
+        if not self.settings["skip_free_to_play"]:
+            return set()
+        anyway = set(self.state.get("idle_anyway", []))
+        return {int(a) for a, free in self.state.get("free_to_play", {}).items() if free and a not in anyway}
+
+    def _learn_free_games(self):
+        """Look up, once per game, whether a game with drops is free to play: those give card drops
+        for in-game purchases, which come while you play them, not while they're idled (CS2)."""
+        with self.lock:
+            known = self.state.setdefault("free_to_play", {})
+            todo = [g["appid"] for g in self.state["games"] if g["drops"] > 0 and str(g["appid"]) not in known][:20]
+        for appid in todo:
+            try:
+                free = steam.free_to_play(appid)
+            except Exception as e:  # tried again with the next badges check
+                print(f"Free-to-play check failed: {e}", flush=True)
+                return
+            with self.lock:
+                known[str(appid)] = free
+            if free and self.settings["skip_free_to_play"] and str(appid) not in self.state.get("idle_anyway", []):
+                self.log(f"Skipping {self._name(appid)}: it's free to play, and those drop cards when you play them yourself")
+            time.sleep(1)
 
     def _game_value(self, appid):
         hit = self.prices.cache.get(f"cards:{appid}")
@@ -693,6 +722,7 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
             now = time.time()
             keep = set(self.settings["never_touch"])
             names = {g["appid"]: g["name"] for g in st["games"]}
+            free_skipped = self._free_skipped()
             return {
                 "signed_in": self.session.signed_in, "account": self.session.account,
                 "qr_svg": self._qr(), "signin_error": self.signin_error,
@@ -702,7 +732,10 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
                 "idling": [{"appid": int(a), "name": self._name(int(a)), "since": i["since"],
                             "last_drop": i.get("last_drop")} for a, i in st["idling"].items()],
                 "games": [dict(g, value=self._game_value(g["appid"]), keep=g["appid"] in keep,
-                               skipped=st["skipped"].get(str(g["appid"]), 0) > now,
+                               skipped=st["skipped"].get(str(g["appid"]), 0) > now or str(g["appid"]) in st.get("skipped_by_you", []),
+                               skipped_by_you=str(g["appid"]) in st.get("skipped_by_you", []),
+                               free=st.get("free_to_play", {}).get(str(g["appid"]), False),
+                               free_skipped=g["appid"] in free_skipped,
                                no_idle=st.get("no_idle", {}).get(str(g["appid"]), 0) > now,
                                idled=st["idled"].get(str(g["appid"]), 0), farmed=st["farmed"].get(str(g["appid"]), 0))
                           for g in self._candidates(with_skipped=True)] if self.session.signed_in else [],
@@ -753,11 +786,31 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
         with self.lock:
             self.state["skipped"].pop(str(appid), None)
             self.state.get("no_idle", {}).pop(str(appid), None)
+            self.state["skipped_by_you"] = [a for a in self.state.get("skipped_by_you", []) if a != str(appid)]
+            if self.state.get("free_to_play", {}).get(str(appid)) and str(appid) not in self.state.setdefault("idle_anyway", []):
+                self.state["idle_anyway"].append(str(appid))
+        self.poke()
+
+    def unskip_all(self):
+        """Every game back in the running: skipped by you, set aside for not dropping, or for not
+        dropping while idled."""
+        with self.lock:
+            n = len({*self.state.get("skipped_by_you", []), *map(str, self._free_skipped()),
+                     *(a for a, until in [*self.state["skipped"].items(), *self.state.get("no_idle", {}).items()]
+                       if until > time.time())})
+            self.state["skipped"], self.state["no_idle"], self.state["skipped_by_you"] = {}, {}, []
+            self.state["idle_anyway"] = sorted(a for a, free in self.state.get("free_to_play", {}).items() if free)
+        if n:
+            self.log(f"Unskipped {n} game{'s' * (n > 1)}")
         self.poke()
 
     def skip(self, appid):
+        """Skipped by you: left alone until you unskip it (the farm's own skips are for a while)."""
         with self.lock:
-            self.state["skipped"][str(appid)] = time.time() + SKIP_FOR
+            mine = self.state.setdefault("skipped_by_you", [])
+            if str(appid) not in mine:
+                mine.append(str(appid))
+            self.state["idle_anyway"] = [a for a in self.state.get("idle_anyway", []) if a != str(appid)]
         self.poke()
 
 
