@@ -362,7 +362,8 @@ td.acts a:hover { color: var(--signal); }
       <div class="head"><h2><i>01</i>Your listings</h2>
         <div class="tools"><button id="listings-check">Check listings</button><button id="listings-reprice" class="go">Reprice undercut</button></div></div>
       <p class="note" id="listings-note">Steam can't change a price, so repricing cancels the listing and lists the item again,
-        which needs your OK in the Steam mobile app once more.</p>
+        which needs your OK in the Steam mobile app once more. To stay under Steam's limits, only listings old enough to
+        reprice and above the lowest price they could go to are priced.</p>
       <div class="scroll">
         <table>
           <thead id="listings-head"><tr><th></th><th>Item</th><th class="r">Yours</th><th class="r">Lowest now</th><th class="r hide-sm">Listed</th><th></th></tr></thead>
@@ -560,13 +561,13 @@ function renderMarket(s) {
   $("#listings-reprice").disabled = !under.length;
   $("#listings-reprice").textContent = under.length ? `Reprice undercut (${under.length})` : "Reprice undercut";
   $("#listings-head").hidden = !L.length;
-  const order = {undercut: 0, young: 1, ok: 2};
+  const order = {undercut: 0, young: 1, ok: 2, floor: 3};
   fill($("#listings"), !L.length ? `<tr><td colspan="6" class="empty">${s.listings.checked ? "Nothing on the market." : "Press Check listings to compare them with today's prices."}</td></tr>`
     : [...L].sort((a, b) => order[a.verdict] - order[b.verdict] || a.created - b.created).map(l => `<tr class="${l.verdict === "ok" ? "dim" : ""}">
       <td style="width:42px">${art(l.icon)}</td>
-      <td class="cardname"><b>${esc(l.name)}</b>${l.verdict === "undercut" ? '<span class="tag">undercut</span>' : l.verdict === "young" ? '<span class="tag">new</span>' : ""}<span class="faint">${esc(l.game)}</span></td>
-      <td class="r num">${money(l.buyer)}</td><td class="r num">${money(l.lowest)}</td><td class="r num hide-sm nowrap">${age(l.created)} ago</td>
-      <td class="acts">${l.verdict !== "ok" ? `<button data-listing="${esc(l.listingid)}" data-a="reprice">Reprice</button>` : ""}<button class="link" data-listing="${esc(l.listingid)}" data-a="cancel">Cancel</button></td></tr>`).join(""));
+      <td class="cardname"><b>${esc(l.name)}</b>${l.verdict === "undercut" ? '<span class="tag">undercut</span>' : l.verdict === "young" ? '<span class="tag">new</span>' : l.verdict === "floor" ? '<span class="tag">at the minimum</span>' : ""}<span class="faint">${esc(l.game)}</span></td>
+      <td class="r num">${money(l.buyer)}</td><td class="r num">${l.lowest == null && l.verdict !== "ok" ? '<span class="faint">not checked</span>' : money(l.lowest)}</td><td class="r num hide-sm nowrap">${age(l.created)} ago</td>
+      <td class="acts">${l.verdict === "undercut" ? `<button data-listing="${esc(l.listingid)}" data-a="reprice">Reprice</button>` : ""}<button class="link" data-listing="${esc(l.listingid)}" data-a="cancel">Cancel</button></td></tr>`).join(""));
   fill($("#sales-days"), s.sales.days.length ? s.sales.days.map(([d, [n, c]]) => `<tr><td class="num">${d}</td><td class="r num">${n}</td><td class="r num">${money(c)}</td></tr>`).join("")
     : '<tr><td colspan="3" class="empty">No sales yet.</td></tr>');
   fill($("#sales-games"), s.sales.games.length ? s.sales.games.map(([g, [n, c]]) => `<tr><td>${esc(g)}</td><td class="r num">${n}</td><td class="r num">${money(c)}</td></tr>`).join("")

@@ -95,21 +95,28 @@ class MarketParts:
     def _check_listings(self):
         try:
             mine = steam.my_listings(self.session)
-            self.progress["listings"] = f"Pricing {len(mine)} listings…"
             now, s = time.time(), self.settings
-            out = []
-            for i, l in enumerate(mine):
-                self.progress["listings"] = f"Pricing your listings: {i + 1} of {len(mine)}"
+            # only listings that could be repriced get a price lookup: old enough, and above the lowest
+            # price they could go to (Steam's 3c minimum, or your own minimum for that kind of item)
+            out, check = [], []
+            for l in sorted(mine, key=lambda l: l["created"]):
+                if now - l["created"] < s["reprice_after_hours"] * 3600:
+                    out.append(dict(l, lowest=None, verdict="young"))
+                elif l["buyer"] <= self._floor(l) + s["reprice_gap_cents"]:
+                    out.append(dict(l, lowest=None, verdict="floor"))
+                else:
+                    check.append(l)
+            for i, l in enumerate(check):
+                self.progress["listings"] = f"Pricing listings that could be repriced: {i + 1} of {len(check)}"
                 try:
                     lowest = self._lowest(l["appid"], l["hash"])
                 except Exception:
                     lowest = None
-                l = dict(l, lowest=lowest, verdict=self._verdict(l, lowest, now))
-                out.append(l)
+                out.append(dict(l, lowest=lowest, verdict=self._verdict(l, lowest, now)))
             with self.lock:
                 self.state["listings"] = {"items": out, "checked": now}
             beaten = sum(1 for l in out if l["verdict"] == "undercut")
-            self.log(f"Listings checked: {len(out)} on the market, {beaten} undercut")
+            self.log(f"Listings checked: {len(out)} on the market, {len(check)} priced, {beaten} undercut")
             if s["cancel_after_days"]:
                 old = [l for l in out if now - l["created"] > s["cancel_after_days"] * 86400]
                 for l in old:
@@ -120,6 +127,11 @@ class MarketParts:
             self.log(f"Couldn't check your listings: {e}", "warn")
         finally:
             self.progress.pop("listings", None)
+
+    def _floor(self, l):
+        """The lowest a listing could be repriced to."""
+        is_card = l["appid"] == 753 and l["game"].endswith("Trading Card")
+        return max(3, self.settings["min_sell_cents" if is_card else "items_min_cents"])
 
     def _verdict(self, l, lowest, now):
         """undercut: someone sells it for more than the allowed gap below yours, and yours has
@@ -167,8 +179,7 @@ class MarketParts:
                     self.handle(card, "existing")  # back under your rules, in the review list
             return 0
         is_card = l["appid"] == 753 and l["game"].endswith("Trading Card")
-        floor = self.settings["min_sell_cents" if is_card else "items_min_cents"]
-        buyer = max(rules.asking_price(self._lowest(l["appid"], l["hash"]), self.settings) or l["buyer"], floor)
+        buyer = max(rules.asking_price(self._lowest(l["appid"], l["hash"]), self.settings) or l["buyer"], self._floor(l))
         receive = rules.received(buyer)
         steam.sell(self.session, assetid, receive, l["appid"], l["context"])
         self.log(f"Relisted {l['name']} for ${rules.buyer_pays(receive) / 100:.2f} (was ${l['buyer'] / 100:.2f})", "sell")

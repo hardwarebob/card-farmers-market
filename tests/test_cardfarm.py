@@ -568,3 +568,16 @@ def test_a_filled_order_counts_even_when_the_status_check_fails(world, monkeypat
     monkeypatch.setattr(steam, "open_buy_orders", lambda s: set())
     f = world["make"]()
     assert f._buy("10-B", 6) is True and ("cancel", "10-B") not in log
+
+
+def test_only_listings_that_could_be_repriced_are_priced(world, monkeypatch):
+    now, asked = time.time(), []
+    monkeypatch.setattr(steam, "my_listings", lambda s: [
+        listing(listingid="new", created=now - 3600, buyer=20),          # too young
+        listing(listingid="min", buyer=4),                               # at the 3c minimum (+2c gap)
+        listing(listingid="old", buyer=20, hash="10-Hero")])             # could be repriced
+    f = world["make"]()
+    f._lowest = lambda appid, h: asked.append(h) or 12
+    f._check_listings()
+    got = {l["listingid"]: l["verdict"] for l in f.state["listings"]["items"]}
+    assert got == {"new": "young", "min": "floor", "old": "undercut"} and asked == ["10-Hero"]

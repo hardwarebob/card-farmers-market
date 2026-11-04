@@ -151,7 +151,7 @@ class Prices:
     """Lowest asking prices (by market hash name) and gem values, cached for a few hours. One fetch
     at a time, whichever part of Card Farm asks, to stay gentle with the market."""
     TTL = 6 * 3600
-    GAP = 3  # seconds between market requests: Steam answers faster ones with 429 "too many requests"
+    GAP = 4  # seconds between market requests: Steam answers faster runs of them with 429 "too many requests"
 
     def __init__(self, path):
         self.path = path
