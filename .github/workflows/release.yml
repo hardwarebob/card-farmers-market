@@ -129,6 +129,6 @@ jobs:
             gh release upload "$GITHUB_REF_NAME" out/* --clobber
           else
             # tags like v0.2.0-beta.4 are pre-releases
-            gh release create "$GITHUB_REF_NAME" out/* --title "Card Farm ${GITHUB_REF_NAME#v}" --notes-file packaging/release-notes.md \
+            gh release create "$GITHUB_REF_NAME" out/* --title "Card Farmer's Market ${GITHUB_REF_NAME#v}" --notes-file packaging/release-notes.md \
               $([[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease)
           fi

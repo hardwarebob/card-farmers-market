@@ -17,7 +17,8 @@ def market_state():
             "gems": {"gems": 0, "sacks": 0, "checked": 0},
             "boosters": {"options": [], "checked": 0, "done": 0, "of": 0},
             "sets": {"offers": [], "checked": 0},
-            "idled": {}, "farmed": {}}
+            "idled": {}, "farmed": {},
+            "finishing": {}}  # appid -> {"game", "since"}: sets being finished; their cards are kept
 
 
 class MarketParts:
@@ -317,21 +318,98 @@ class MarketParts:
             self.progress.pop("sets", None)
 
     def finish_set(self, appid):
-        """Craft the badge of a set you hold every card of."""
+        """Buy what a set is missing (within the limit) and craft its badge."""
         with self.lock:
             offer = next((o for o in self.state["sets"]["offers"] if o["appid"] == appid), None)
             if not offer:
                 raise ValueError("that set isn't on the list any more; check sets again")
-            if offer["missing"]:
-                raise ValueError("you don't have every card of that set yet")
+            if offer["missing"] and offer["cost"] > self.settings["set_budget_cents"]:
+                raise ValueError(f"the missing cards cost about ${offer['cost'] / 100:.2f}, over your limit")
             self.state["sets"]["offers"].remove(offer)
+            # from now until the badge is crafted, this game's cards aren't sold or ground
+            self.state["finishing"][str(appid)] = {"game": offer["game"], "since": time.time()}
         self._enqueue("set", {"id": f"set-{appid}", "kind": "set", "offer": offer})
         self.save()
 
+    def finishing(self, appid):
+        return str(appid) in self.state["finishing"]
+
+    def stop_finishing(self, appid):
+        """Release a set's cards to your selling rules again."""
+        with self.lock:
+            done = self.state["finishing"].pop(str(appid), None)
+        if done:
+            self.log(f"Stopped finishing the {done['game']} set; its cards follow your rules again")
+        self.save()
+
+    def _buy(self, hash_name, price):
+        """Buy one at `price` through a buy order; True once Steam says it was bought. An order
+        that doesn't fill within a few seconds (the listing sold) is cancelled again."""
+        name = hash_name.split("-", 1)[1]
+        order = steam.create_buy_order(self.session, hash_name, price)
+        if "confirm" in order:
+            # Steam wants each purchase OK'd in the mobile app; once it is, sending the order again
+            # with the confirmation's id goes through
+            self.notify("Confirm the purchase", f"Approve buying {name} in the Steam mobile app (Confirmations).")
+            self.log(f"Waiting for you to confirm buying {name} in the Steam mobile app (up to 10 min)", "warn")
+            self.progress["sets"] = f"Confirm buying {name} in the Steam app…"
+            try:
+                for _ in range(120):
+                    time.sleep(5)
+                    again = steam.create_buy_order(self.session, hash_name, price, confirmation=order["confirm"])
+                    if "orderid" in again:
+                        order = again
+                        break
+                else:
+                    raise RuntimeError(f"buying {name} wasn't confirmed in the Steam app within 10 minutes")
+            finally:
+                self.progress.pop("sets", None)
+        for _ in range(8):
+            time.sleep(2)
+            try:
+                if steam.buy_order_status(self.session, order["orderid"]).get("purchased"):
+                    return True
+            except steam.HttpError:
+                # Steam's status check turns away orders that filled at once; an order that's no
+                # longer open has filled (nothing here cancels one before this point)
+                if order["orderid"] not in steam.open_buy_orders(self.session):
+                    return True
+        steam.cancel_buy_order(self.session, order["orderid"])
+        return False
+
     def _do_set(self, e):
-        o = e["offer"]
+        """Price every missing card (cheapest listing that isn't yours) and stop before buying
+        anything if one can't be had or the total is over the limit; then buy them and craft."""
+        o, spent = e["offer"], 0
         if steam.card_set(self.session, o["appid"])["level"] >= 5:
             raise RuntimeError(f"the {o['game']} badge is already at its top level")
-        steam.craft_badge(self.session, o["appid"])
-        self.log(f"Crafted the {o['game']} badge", "gems")
+        plan = []
+        for hash_name in o["missing_hashes"]:
+            price = steam.cheapest_listing(self.session, self.prices, hash_name)
+            if not price:
+                raise RuntimeError(f"nobody else is selling {hash_name.split('-', 1)[1]} right now; nothing bought")
+            plan.append((hash_name, price))
+        total, budget = sum(p for _, p in plan), self.settings["set_budget_cents"]
+        if total > budget:
+            raise RuntimeError(f"the {o['game']} cards cost ${total / 100:.2f} now, over your limit; nothing bought")
+        for n, (hash_name, price) in enumerate(plan):
+            name = hash_name.split("-", 1)[1]
+            if not self._buy(hash_name, price):  # that listing sold: once more at the next price
+                price = steam.cheapest_listing(self.session, self.prices, hash_name)
+                rest = sum(p for _, p in plan[n + 1:])
+                if not price or spent + price + rest > budget or not self._buy(hash_name, price):
+                    raise RuntimeError(f"couldn't buy {name} within your limit; stopped after ${spent / 100:.2f}")
+            spent += price
+            self.log(f"Bought {name} for ${price / 100:.2f}")
+        for attempt in range(6):
+            try:
+                steam.craft_badge(self.session, o["appid"])
+                break
+            except (RuntimeError, steam.HttpError):
+                if attempt == 5:
+                    raise
+                time.sleep(5)  # bought cards take a moment to reach the inventory
+        with self.lock:
+            self.state["finishing"].pop(str(o["appid"]), None)
+        self.log(f"Crafted the {o['game']} badge" + (f" (bought cards for ${spent / 100:.2f})" if spent else ""), "gems")
         return 0

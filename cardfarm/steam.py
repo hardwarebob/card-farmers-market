@@ -40,7 +40,7 @@ def badges(session):
     base = f"{COMMUNITY}/profiles/{session.steamid}/badges/?l=english"
     status, first = request(base, cookies=session.cookies())
     if status != 200:  # a 429 here makes the farm's loop back off
-        raise HttpError(status)
+        raise HttpError(status, first[:300], base)
     if "g_steamID = false" in first:
         raise RuntimeError("Steam says we're signed out; sign in again")
     games = parse_badges(first)
@@ -319,10 +319,11 @@ def my_listings(session):
 
 def remove_listing(session, listingid):
     """Cancel one listing; the item goes back to the inventory."""
-    status, _ = request(f"{COMMUNITY}/market/removelisting/{listingid}", data={"sessionid": session.sessionid},
-                        cookies=session.cookies(), headers={"Referer": f"{COMMUNITY}/market/", "Origin": COMMUNITY})
+    url = f"{COMMUNITY}/market/removelisting/{listingid}"
+    status, body = request(url, data={"sessionid": session.sessionid}, cookies=session.cookies(),
+                           headers={"Referer": f"{COMMUNITY}/market/", "Origin": COMMUNITY})
     if status != 200:
-        raise HttpError(status)
+        raise HttpError(status, body[:300], url)
 
 
 def parse_sales(d):
@@ -398,9 +399,10 @@ def parse_booster_page(page):
 
 
 def booster_options(session):
-    status, page = request(f"{COMMUNITY}/tradingcards/boostercreator/?l=english", cookies=session.cookies())
+    url = f"{COMMUNITY}/tradingcards/boostercreator/?l=english"
+    status, page = request(url, cookies=session.cookies())
     if status != 200:
-        raise HttpError(status)
+        raise HttpError(status, page[:300], url)
     return parse_booster_page(page)
 
 
@@ -449,10 +451,86 @@ def parse_set_page(page):
 
 
 def card_set(session, appid):
-    status, page = request(f"{COMMUNITY}/profiles/{session.steamid}/gamecards/{appid}/?l=english", cookies=session.cookies())
+    url = f"{COMMUNITY}/profiles/{session.steamid}/gamecards/{appid}/?l=english"
+    status, page = request(url, cookies=session.cookies())
     if status != 200:
-        raise HttpError(status)
+        raise HttpError(status, page[:300], url)
     return parse_set_page(page)
+
+
+def parse_listing_page(page):
+    """[(listingid, buyer price)] for sale on a market item's page, cheapest first, leaving out
+    your own (Steam's page carries its listings as JSON in a valve-ssr-data script)."""
+    m = re.search(r'<script[^>]*id="valve-ssr-data"[^>]*>(.*?)</script>', page, re.S)
+    if not m:
+        raise RuntimeError("Steam's market page didn't have its listings in it")
+    queries = json.loads(json.loads(m[1])["renderContext"]["queryData"]).get("queries", [])
+    out = []
+    for q in queries:
+        data = (q.get("state") or {}).get("data")
+        if (q.get("queryKey") or [""])[0] != "market_item_search" or not isinstance(data, dict):
+            continue
+        for p in data.get("pages", []):
+            out += [(str(l["listingid"]), int(l["unPrice"]) + int(l["unFee"])) for l in p.get("listings", [])
+                    if not l.get("bMine") and l.get("eCurrency") == 1]
+    return sorted(out, key=lambda x: x[1])
+
+
+def cheapest_listing(session, prices, hash_name, appid=753):
+    """What the cheapest listing someone else has up costs a buyer (cents), or None."""
+    url = f"{COMMUNITY}/market/listings/{appid}/{urllib.parse.quote(hash_name)}"
+
+    def fetch():
+        time.sleep(max(0.0, prices._last + prices.GAP - time.time()))
+        try:
+            status, page = request(url, cookies=session.cookies())
+        finally:
+            prices._last = time.time()
+        if status == 400:  # the market page turns some requests away for a moment
+            raise HttpError(502, page[:300], url)
+        if status != 200:
+            raise HttpError(status, page[:300], url)
+        return page
+    with prices.lock:
+        page = _patient(fetch)
+    found = parse_listing_page(page)
+    return found[0][1] if found else None
+
+
+def create_buy_order(session, hash_name, price_each, quantity=1, appid=753, confirmation="0"):
+    """Steam's market buys through buy orders: one at (or above) the cheapest listing's price fills
+    straight away. Returns {"orderid"} or, when Steam wants it confirmed in the app, {"confirm"}."""
+    r = post_json(f"{COMMUNITY}/market/createbuyorder/",
+                  {"sessionid": session.sessionid, "currency": 1, "appid": appid, "market_hash_name": hash_name,
+                   "price_total": price_each * quantity, "tradefee_tax": 0, "quantity": quantity, "first_name": "",
+                   "last_name": "", "billing_address": "", "billing_address_two": "", "billing_country": "",
+                   "billing_city": "", "billing_state": "", "billing_postal_code": "", "confirmation": confirmation,
+                   "save_my_address": 0},
+                  cookies=session.cookies(), headers={"Referer": f"{COMMUNITY}/market/listings/{appid}/{urllib.parse.quote(hash_name)}",
+                                                      "Origin": COMMUNITY})
+    if r.get("success") == 1 and r.get("buy_orderid"):
+        return {"orderid": str(r["buy_orderid"])}
+    if r.get("need_confirmation"):
+        return {"confirm": str(r["confirmation"]["confirmation_id"])}
+    raise RuntimeError(r.get("message") or "Steam didn't take the buy order")
+
+
+def buy_order_status(session, orderid):
+    return get_json(f"{COMMUNITY}/market/getbuyorderstatus/?sessionid={session.sessionid}&buy_orderid={orderid}",
+                    cookies=session.cookies())
+
+
+def open_buy_orders(session):
+    """Ids of your buy orders still waiting on the market."""
+    d = get_json(f"{COMMUNITY}/market/mylistings/render/?query=&start=0&count=10&norender=1", cookies=session.cookies())
+    return {str(o.get("buy_orderid")) for o in d.get("buy_orders") or []}
+
+
+def cancel_buy_order(session, orderid):
+    r = post_json(f"{COMMUNITY}/market/cancelbuyorder/", {"sessionid": session.sessionid, "buy_orderid": orderid},
+                  cookies=session.cookies(), headers={"Referer": f"{COMMUNITY}/market/", "Origin": COMMUNITY})
+    if not r.get("success"):
+        raise RuntimeError(r.get("error") or "Steam didn't cancel the buy order")
 
 
 def craft_badge(session, appid, series=1):

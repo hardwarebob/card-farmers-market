@@ -69,6 +69,8 @@ def route(farm, path, body):
         return farm.make_boosters(a if a == "profitable" else [int(x) for x in a or []])
     if path == "/api/sets/check":
         return farm.check_sets()
+    if path == "/api/sets/stop":
+        return farm.stop_finishing(int(body["appid"]))
     if path == "/api/sets/finish":
         return farm.finish_set(int(body["appid"]))
     if path == "/api/update":

@@ -46,7 +46,7 @@ class WebviewApp:
         threading.Thread(target=self.farm.run, daemon=True).start()
         # a file:// address: pywebview starts its built-in web server only for bare paths
         page = pathlib.Path(HERE, "ui", "index.html").as_uri()
-        self.window = webview.create_window("Card Farm", page, js_api=Bridge(self),
+        self.window = webview.create_window("Card Farmer's Market", page, js_api=Bridge(self),
                                             width=1100, height=820, min_size=(420, 500),
                                             minimized=self.background, background_color="#0f0e0c")
         self.window.events.closing += self._closing

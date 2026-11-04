@@ -26,7 +26,7 @@ DEFAULTS = {
     "reprice_gap_cents": 2,      # ...and only when someone sells for more than this below yours
     "cancel_after_days": 0,      # cancel listings unsold this long (0: never); they come back for review
     "notify_sales": True,        # desktop notification when things sell
-    "set_budget_cents": 50,      # sets whose missing cards cost less than this are pointed out
+    "set_budget_cents": 50,      # most to spend buying the missing cards of one set
 }
 MODES = ("auto", "review", "off")
 

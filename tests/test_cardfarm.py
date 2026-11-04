@@ -475,8 +475,9 @@ def test_sets_you_hold_part_of_are_offered(world, monkeypatch):
     f._check_sets()
     (offer,) = f.state["sets"]["offers"]
     assert (offer["have"], offer["of"], offer["missing"], offer["cost"]) == (2, 3, ["C"], 7)
+    f.update_settings({"set_budget_cents": 5})
     with pytest.raises(ValueError):
-        f.finish_set(10)                          # a card is still missing: nothing to craft
+        f.finish_set(10)                          # over the limit: nothing is bought
 
 
 def test_idle_time_and_drops_add_up_per_game(world):
@@ -498,3 +499,72 @@ def test_steam_hiccups_are_retried(monkeypatch):
             raise steam.HttpError(500)
         return "ok"
     assert steam._patient(flaky) == "ok" and len(calls) == 3
+
+
+def test_market_page_listings_leave_out_your_own():
+    listings = [{"listingid": "1", "unPrice": 9, "unFee": 2, "eCurrency": 1, "bMine": False},
+                {"listingid": "2", "unPrice": 4, "unFee": 2, "eCurrency": 1, "bMine": True},
+                {"listingid": "3", "unPrice": 6, "unFee": 2, "eCurrency": 1, "bMine": False}]
+    query_data = json.dumps({"queries": [{"queryKey": ["market_item_search", {}], "state": {"data": {"pages": [{"listings": listings}]}}},
+                                         {"queryKey": ["market"], "state": {"data": {"pages": [{"listings": [{"listingid": "x"}]}]}}}]})
+    page = f'<html><script id="valve-ssr-data" type="application/json">{json.dumps({"renderContext": {"queryData": query_data}})}</script>'
+    assert steam.parse_listing_page(page) == [("3", 8), ("1", 11)]
+
+
+def buying_world(monkeypatch, fills=True):
+    log = []
+    monkeypatch.setattr(market_mod.time, "sleep", lambda x: None)
+    monkeypatch.setattr(steam, "create_buy_order", lambda s, h, p, **kw: log.append(("order", h, p)) or {"orderid": h})
+    monkeypatch.setattr(steam, "buy_order_status", lambda s, o: {"purchased": 1 if fills else 0})
+    monkeypatch.setattr(steam, "cancel_buy_order", lambda s, o: log.append(("cancel", o)))
+    monkeypatch.setattr(steam, "card_set", lambda s, a: {"level": 0, "cards": []})
+    monkeypatch.setattr(steam, "craft_badge", lambda s, a: log.append(("craft", a)))
+    return log
+
+
+def test_a_set_is_bought_and_crafted(world, monkeypatch):
+    log = buying_world(monkeypatch)
+    monkeypatch.setattr(steam, "cheapest_listing", lambda s, p, h: {"10-B": 6, "10-C": 7}[h])
+    f = world["make"]()
+    f._do_set({"offer": {"appid": 10, "game": "Game", "missing_hashes": ["10-B", "10-C"]}})
+    assert log == [("order", "10-B", 6), ("order", "10-C", 7), ("craft", 10)]
+
+
+def test_nothing_is_bought_when_the_set_got_dearer(world, monkeypatch):
+    log = buying_world(monkeypatch)
+    monkeypatch.setattr(steam, "cheapest_listing", lambda s, p, h: 30)
+    f = world["make"]()
+    with pytest.raises(RuntimeError, match="nothing bought"):
+        f._do_set({"offer": {"appid": 10, "game": "Game", "missing_hashes": ["10-B", "10-C"]}})  # 60c > 50c
+    assert log == []
+
+
+def test_an_unfilled_buy_order_is_cancelled(world, monkeypatch):
+    log = buying_world(monkeypatch, fills=False)
+    f = world["make"]()
+    assert f._buy("10-B", 6) is False and log == [("order", "10-B", 6), ("cancel", "10-B")]
+
+
+def test_a_set_being_finished_keeps_its_cards(world, monkeypatch):
+    f = world["make"]()
+    f.state["sets"]["offers"] = [{"appid": 10, "game": "Game", "have": 2, "of": 3, "missing": ["C"],
+                                  "missing_hashes": ["10-C"], "cost": 7, "worth": 9, "unpriced": False}]
+    f.state["review"] = [{"id": "r1", "kind": "card", "card": card(assetid="r1"), "action": "sell", "detail": {}}]
+    f._enqueue("gems", {"id": "q1", "kind": "card", "card": card(assetid="q1"), "detail": {"gems": 20}})
+    f.finish_set(10)
+    assert f.evaluate(card())[0] == "keep"                     # a new drop of it is kept
+    f.decide_review("all", "suggested")
+    assert [e["id"] for e in f.state["review"]] == ["r1"]      # the review list keeps it too
+    assert f._do("gems", f.state["queue"][0]["entry"]) == 0 and world["sold"] == []   # queued earlier: skipped
+    f.stop_finishing(10)
+    assert f.evaluate(card())[0] == "sell"
+
+
+def test_a_filled_order_counts_even_when_the_status_check_fails(world, monkeypatch):
+    log = buying_world(monkeypatch)
+    def refuse(s, o):
+        raise steam.HttpError(400)
+    monkeypatch.setattr(steam, "buy_order_status", refuse)
+    monkeypatch.setattr(steam, "open_buy_orders", lambda s: set())
+    f = world["make"]()
+    assert f._buy("10-B", 6) is True and ("cancel", "10-B") not in log

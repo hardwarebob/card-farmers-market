@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=Card Farm
+Name=Card Farmer's Market
 Comment=Farm Steam trading cards in the background
 Exec=card-farm --background
 Icon=io.github.cardfarm.CardFarm

@@ -54,7 +54,7 @@ class CardFarmApp(Adw.Application):
         if self.window:
             self.window.present()
             return
-        self.window = Adw.ApplicationWindow(application=self, title="Card Farm", default_width=1100, default_height=820)
+        self.window = Adw.ApplicationWindow(application=self, title="Card Farmer's Market", default_width=1100, default_height=820)
         self.window.connect("close-request", self._on_close)
 
         menu = Gio.Menu()
@@ -143,7 +143,7 @@ class CardFarmApp(Adw.Application):
         window.set_visible(False)
         if not self.held:
             self._hold()
-            self._notify("Card Farm keeps farming", "It's running in the background. Open Card Farm again "
+            self._notify("Card Farmer's Market keeps farming", "It's running in the background. Open it again "
                                                     "to see it, or use Quit in its menu to stop.")
         return True
 

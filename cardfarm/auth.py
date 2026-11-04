@@ -48,7 +48,7 @@ class Session:
     # --- QR sign-in -------------------------------------------------------------------
     def start_qr(self):
         r = post_json(f"{API}/BeginAuthSessionViaQR/v1/",
-                      {"device_friendly_name": "Card Farm", "platform_type": 2, "website_id": "Community"})["response"]
+                      {"device_friendly_name": "Card Farmer's Market", "platform_type": 2, "website_id": "Community"})["response"]
         self.qr = {"client_id": r["client_id"], "request_id": r["request_id"], "url": r["challenge_url"],
                    "interval": float(r.get("interval", 5)), "expires": time.time() + 600}
         return self.qr

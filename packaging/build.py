@@ -24,7 +24,7 @@ BUILD_ONLY = {"pyinstaller", "pyinstaller-hooks-contrib", "pip", "setuptools", "
 
 def notices():
     """Licence texts of Python and of the libraries the build bundles."""
-    parts = ["Card Farm is MIT licensed (see LICENSE). It is built with, and its downloads contain, the\n"
+    parts = ["Card Farmer's Market is MIT licensed (see LICENSE). It is built with, and its downloads contain, the\n"
              "following software under their own licences.\n"]
     python_licence = next((p for p in (pathlib.Path(sys.base_prefix, "LICENSE.txt"),
                                        pathlib.Path(sys.base_prefix, "lib", f"python{sys.version_info[0]}.{sys.version_info[1]}", "LICENSE.txt"))

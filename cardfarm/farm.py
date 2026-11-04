@@ -73,7 +73,7 @@ class Farm(market.MarketParts):
         steam.on_wait = self._slowed_down
 
     def _slowed_down(self):
-        self._starting("Steam asked Card Farm to slow down; waiting a minute…")
+        self._starting("Steam asked to slow down; waiting a minute…")
         self.log("Steam said too many requests; waiting a minute", "warn")
 
     def _path(self, name):
@@ -167,7 +167,7 @@ class Farm(market.MarketParts):
                 else:
                     backoff = min(backoff * 2 or 5, 30)
                     wait = backoff * 60
-                    self.error = f"Steam asked Card Farm to slow down (too many requests); trying again in {backoff} min"
+                    self.error = f"Steam asked to slow down (too many requests); trying again in {backoff} min"
                     self.log(self.error, "warn")
             except Exception as e:
                 self.error = str(e)
@@ -402,6 +402,8 @@ class Farm(market.MarketParts):
         return pending
 
     def evaluate(self, card):
+        if self.finishing(card["appid"]):
+            return "keep", {"why": "you're finishing its set", "buyer": None, "gems": 0}
         lowest = self.prices.game_cards(card["appid"]).get(card["hash"])
         item_type = card["goo"][1] if card.get("goo") else None
         gems = self.prices.gems(card["appid"], item_type, card["foil"])
@@ -494,6 +496,8 @@ class Farm(market.MarketParts):
                     box["review"] = [x for x in box["review"] if x["item"]["hash"] not in names]
                 if act in ("keep", "always"):
                     self.state["kept"].append(e["id"])
+                elif e.get("kind") == "card" and self.finishing(e["card"]["appid"]):
+                    box["review"].append(e)  # stays: its set is being finished
                 elif act in ("sell", "gems"):
                     self._enqueue(act, e)
         if action == "always":
@@ -515,7 +519,7 @@ class Farm(market.MarketParts):
                 self.state["items"]["inventories"] = found
             if not chosen:
                 if manual:
-                    self.log("Found your inventories; pick which ones Card Farm may sell from")
+                    self.log("Found your inventories; pick which ones may be sold from")
                 return
             pending = self._drop_pending_from_review()
             skip = self._queued_ids() | pending
@@ -592,13 +596,13 @@ class Farm(market.MarketParts):
                     self.log(f"Steam asked to slow down; {what} waits 5 min", "warn")
                     time.sleep(300)
                     continue
-                self.log(f"Couldn't {job['action']} {what}: {err}", "warn")
+                self.log(f"Couldn't {VERBS.get(job['action'], job['action'])} {what}: {err}", "warn")
             except Exception as err:
                 if steam.ALREADY_LISTED in str(err):
                     self.log(f"{what} is already listed and waits for your OK in the Steam app")
                     listed += 1
                 else:
-                    self.log(f"Couldn't {job['action']} {what}: {err}", "warn")
+                    self.log(f"Couldn't {VERBS.get(job['action'], job['action'])} {what}: {err}", "warn")
             with self.lock:
                 if job in self.state["queue"]:
                     self.state["queue"].remove(job)
@@ -632,6 +636,9 @@ class Farm(market.MarketParts):
             return 1
         card = e["card"]
         label = f"{card['name']} ({card['game']})"
+        if self.finishing(card["appid"]):  # queued before the set was started
+            self.log(f"Kept {label}: you're finishing its set")
+            return 0
         if action == "sell":
             buyer = rules.asking_price(self.prices.game_cards(card["appid"]).get(card["hash"]), self.settings)
             if not buyer:
@@ -680,7 +687,7 @@ class Farm(market.MarketParts):
                 "update": self.update and dict(self.update, installable=bool(self.update.get("url"))),
                 "listings": st["listings"], "sales": self.sales_summary(), "gems": st["gems"],
                 "boosters": dict(st["boosters"], options=[o for o in st["boosters"]["options"] if o["profit"] > -999][:150]),
-                "sets": st["sets"],
+                "sets": dict(st["sets"], finishing=[dict(v, appid=int(k)) for k, v in st["finishing"].items()]),
             }
 
     def _qr(self):
@@ -697,12 +704,12 @@ class Farm(market.MarketParts):
 
     def _install_update(self):
         try:
-            self.log(f"Downloading Card Farm {self.update['version']}…")
+            self.log(f"Downloading Card Farmer's Market {self.update['version']}…")
             path = update.fetch(self.update)
             self.idler.stop_all()
             self.save()
             update.install(path)
-            self.log(f"Installing {self.update['version']}; Card Farm reopens in a moment")
+            self.log(f"Installing {self.update['version']}; it reopens in a moment")
             self.save()
             if self.on_quit:
                 self.on_quit()
@@ -725,11 +732,15 @@ def _owed_list(value):
     return list(value) if isinstance(value, list) else [time.time()] * int(value or 0)
 
 
+VERBS = {"gems": "turn into gems", "set": "finish", "booster": "make", "pack": "pack", "sell": "sell",
+         "reprice": "reprice", "cancel": "cancel"}
+
+
 def _label(e):
     """What a queued job is about, for the tape."""
     kind = e["kind"]
     return {"card": lambda: e["card"]["name"], "item": lambda: e["item"]["name"], "listing": lambda: e["listing"]["name"],
-            "gems": lambda: "gems", "booster": lambda: f"{e['booster']['name']} booster pack",
+            "gems": lambda: "your gems", "booster": lambda: f"the booster pack for {e['booster']['name']}",
             "set": lambda: f"the {e['offer']['game']} set"}[kind]()
 
 
@@ -751,7 +762,7 @@ def _notify(title, body):
             subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_TOAST, title, body],
                            timeout=20, creationflags=0x08000000)
         else:
-            subprocess.run(["notify-send", "-a", "Card Farm", title, body], timeout=10)
+            subprocess.run(["notify-send", "-a", "Card Farmer's Market", title, body], timeout=10)
     except Exception:
         pass
 
@@ -762,7 +773,7 @@ $title, $body = $args
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
 $xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
 $text = $xml.GetElementsByTagName('text')
-$text.Item(0).AppendChild($xml.CreateTextNode("Card Farm: $title")) > $null
+$text.Item(0).AppendChild($xml.CreateTextNode("Card Farmer's Market: $title")) > $null
 $text.Item(1).AppendChild($xml.CreateTextNode($body)) > $null
 $app = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($app).Show([Windows.UI.Notifications.ToastNotification]::new($xml))

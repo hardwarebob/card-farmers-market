@@ -42,13 +42,13 @@ def main():
         try:
             from .app import run_window
         except (ImportError, ValueError) as e:
-            sys.exit(f"Card Farm needs GTK 4, libadwaita and WebKitGTK 6 with their Python bindings ({e}).")
+            sys.exit(f"Card Farmer's Market needs GTK 4, libadwaita and WebKitGTK 6 with their Python bindings ({e}).")
         sys.exit(run_window(lambda: Farm(data), background=background))
     unblock_downloaded_files()
     try:
         from .app_webview import run_window
     except ImportError as e:
-        sys.exit(f"Card Farm needs the pywebview package here ({e}).")
+        sys.exit(f"Card Farmer's Market needs the pywebview package here ({e}).")
     sys.exit(run_window(lambda: Farm(data), data, background=background))
 
 

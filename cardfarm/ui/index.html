@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Card Farm</title>
+<title>Card Farmer's Market</title>
 <style>
 /* A trader's ledger: paper, ink, ruled lines. Square corners, condensed caps, tabular figures. */
 :root {
@@ -174,12 +174,12 @@ td.acts a:hover { color: var(--signal); }
     <button id="update" class="go small-go" hidden></button>
     <a id="update-link" class="small" target="_blank" rel="noopener" hidden></a>
     <button id="signout" class="link" hidden>Sign out</button>
-    <button id="quit" class="link" hidden title="Stop farming and close Card Farm">Quit</button>
+    <button id="quit" class="link" hidden title="Stop farming and close the app">Quit</button>
   </div>
 
   <div id="signin" class="gate" hidden>
     <h2>Sign in through the Steam app</h2>
-    <p class="faint">Card Farm signs in the same way the Steam website does, with a QR code. It never sees your password.</p>
+    <p class="faint">Card Farmer's Market signs in the same way the Steam website does, with a QR code. It never sees your password.</p>
     <div class="alert" id="signin-error" hidden></div>
     <div class="qr" id="qrbox" hidden>
       <div id="qr"></div>
@@ -263,7 +263,7 @@ td.acts a:hover { color: var(--signal); }
         <div class="head"><h2><i>03</i>Games with drops</h2><div class="tools"><button id="refresh">Check now</button></div></div>
         <div class="scroll">
           <table>
-            <thead><tr><th>Game</th><th class="r">Left</th><th class="r hide-sm">Dropped</th><th class="r hide-sm" title="Time Card Farm idled it, per card it dropped">Pace</th><th class="r">Avg card</th><th></th></tr></thead>
+            <thead><tr><th>Game</th><th class="r">Left</th><th class="r hide-sm">Dropped</th><th class="r hide-sm" title="Time spent idling it, per card it dropped">Pace</th><th class="r">Avg card</th><th></th></tr></thead>
             <tbody id="games"></tbody>
           </table>
         </div>
@@ -277,11 +277,14 @@ td.acts a:hover { color: var(--signal); }
     <section class="settings">
       <div class="head"><h2><i>05</i>Finish sets <span id="sets-count" class="faint"></span></h2>
         <div class="tools"><button id="sets-check">Find sets</button></div></div>
-      <div class="line"><span>Point out sets cheaper to finish than<small>cents for the cards still missing</small></span>
+      <div class="line"><span>Spend at most<small>cents per set, on the cards it's missing</small></span>
         <input type="number" min="0" data-key="set_budget_cents"></div>
+      <div class="alert" id="sets-progress" hidden></div>
+      <div class="line wide" id="finishing-line" hidden><span>Finishing<small>these sets' cards aren't sold or turned into gems until the badge is crafted</small></span>
+        <span class="chips" id="finishing"></span></div>
       <p class="note" id="sets-note">Sets you hold some cards of: what the missing ones cost on the market now, and what your
-        cards would sell for instead. Buy the missing ones on Steam (the price may include your own listings); once you have
-        every card, Craft makes the badge.</p>
+        cards would sell for instead. "Buy &amp; craft" checks every missing card's price first and buys nothing if the set has
+        got dearer than your limit; then it buys them (from your Steam wallet) and crafts the badge.</p>
       <div class="scroll">
         <table>
           <thead id="sets-head"><tr><th>Game</th><th class="r">Have</th><th class="pl">Missing</th><th class="r">They cost</th><th class="r hide-sm">Yours sell for</th><th></th></tr></thead>
@@ -299,7 +302,7 @@ td.acts a:hover { color: var(--signal); }
         <div><b id="i-listed">–</b><span>Listed</span></div>
         <div><b id="i-cents">–</b><span>You get</span></div>
       </div>
-      <p class="note">Skins, cases, stickers, backgrounds, emoticons and anything else marketable. Card Farm only
+      <p class="note">Skins, cases, stickers, backgrounds, emoticons and anything else marketable. It only
         looks in the inventories you switch on, and only lists an item when you say so, unless "New items" is Auto.</p>
     </section>
 
@@ -601,14 +604,20 @@ function renderSets(s) {
   $("#sets-count").textContent = ready.length ? `(${ready.length} ready)` : "";
   $("#sets-check").disabled = s.busy.includes("sets");
   $("#sets-check").textContent = busyText(s, "sets", "Find sets", "Looking…");
+  const fin = s.sets.finishing || [];
+  $("#finishing-line").hidden = !fin.length;
+  fill($("#finishing"), fin.map(f => `<button class="chip on" data-stop-set="${f.appid}" title="Stop: its cards follow your rules again"><b>${esc(f.game)}</b><span class="x">stop</span></button>`).join(""));
+  const waiting = !s.busy.includes("sets") && s.progress.sets;  // a purchase waiting for the phone
+  $("#sets-progress").hidden = !waiting;
+  $("#sets-progress").textContent = waiting || "";
   $("#sets-head").hidden = !o.length;
   fill($("#sets"), !o.length ? `<tr><td colspan="6" class="empty">${s.sets.checked ? "No sets you hold part of." : "Press Find sets."}</td></tr>`
     : o.slice(0, 60).map(x => `<tr class="${!x.missing.length || cheap(x) ? "" : "dim"}">
       <td>${esc(x.game)}</td><td class="r num">${x.have}/${x.of}</td>
       <td class="small pl">${x.missing.length ? esc(x.missing.slice(0, 4).join(", ")) + (x.missing.length > 4 ? ` +${x.missing.length - 4}` : "") : '<span class="tag">complete</span>'}</td>
       <td class="r num">${x.unpriced ? '<span class="faint">some unsold</span>' : money(x.cost)}</td><td class="r num hide-sm">${money(x.worth)}</td>
-      <td class="acts">${x.missing.length ? `<a class="small" target="_blank" rel="noopener" href="https://steamcommunity.com/my/gamecards/${x.appid}/">Open on Steam</a>`
-        : `<button data-set="${x.appid}">Craft</button>`}</td></tr>`).join(""));
+      <td class="acts">${!x.missing.length ? `<button data-set="${x.appid}">Craft</button>` : cheap(x) ? `<button data-set="${x.appid}">Buy &amp; craft</button>`
+        : `<a class="small" target="_blank" rel="noopener" href="https://steamcommunity.com/my/gamecards/${x.appid}/">Open on Steam</a>`}</td></tr>`).join(""));
 }
 
 function renderTape(history) {
@@ -623,7 +632,7 @@ function renderUpdate(s) {
   $("#update").hidden = !(u && u.installable);
   $("#update").disabled = busy;
   $("#update").textContent = busy ? "Updating…" : u ? `Update to ${u.version.replace(/^v\d+\.\d+\.\d+-/, "").replace(/^v/, "")}` : "";
-  $("#update").title = u ? `Card Farm ${u.version.replace(/^v/, "")}` : "";
+  $("#update").title = u ? `Card Farmer's Market ${u.version.replace(/^v/, "")}` : "";
   $("#update-link").hidden = !(u && !u.installable);
   if (u) { $("#update-link").href = u.page; $("#update-link").textContent = `${u.version.replace(/^v/, "")} is out`; }
 }
@@ -674,7 +683,7 @@ function render(s) {
 
 async function load() {
   try { render(JSON.parse((await call("GET", "/api/state"))[1])); }
-  catch (e) { $("#status").textContent = "Card Farm isn't answering (" + e + ")"; }
+  catch (e) { $("#status").textContent = "Card Farmer's Market isn't answering (" + e + ")"; }
 }
 
 const setting = (k, v) => post("/api/settings", {[k]: v});
@@ -703,8 +712,11 @@ document.addEventListener("click", e => {
     && post("/api/listings", {ids: [d.listing], action: d.a});
   if (d.booster) return confirm("Make this booster pack from your gems and list it? Gems can't be taken back; the listing needs your OK in the Steam app.")
     && post("/api/boosters/make", {appids: [+d.booster]});
+  if (d.stopSet) return confirm("Stop finishing this set? Its cards will be sold or turned into gems by your rules again.")
+    && post("/api/sets/stop", {appid: +d.stopSet});
   if (d.set) { const x = state.sets.offers.find(o => o.appid === +d.set);
-    return confirm(`Craft the ${x.game} badge? It uses up one of each of its ${x.of} cards.`) && post("/api/sets/finish", {appid: x.appid}); }
+    return confirm(x.missing.length ? `Buy ${x.missing.length} card${x.missing.length > 1 ? "s" : ""} for about ${money(x.cost)} from your Steam wallet, then craft the ${x.game} badge? Crafting uses up one of each card.`
+      : `Craft the ${x.game} badge? It uses up one of each of its ${x.of} cards.`) && post("/api/sets/finish", {appid: x.appid}); }
   if (d.inv) return setting("items_inventories", s.items_inventories.includes(d.inv) ? without(s.items_inventories, d.inv) : [...s.items_inventories, d.inv]);
 });
 document.addEventListener("change", e => {
@@ -715,11 +727,11 @@ document.addEventListener("change", e => {
   setting(k, v);
 });
 $("#start-signin").onclick = () => post("/api/sign-in");
-$("#update").onclick = () => confirm(`Update Card Farm to ${state.update.version.replace(/^v/, "")}? It closes, updates and opens `
+$("#update").onclick = () => confirm(`Update Card Farmer's Market to ${state.update.version.replace(/^v/, "")}? It closes, updates and opens `
   + "again in a moment. Your settings and sign-in stay.") && post("/api/update");
 $("#quit").hidden = !BRIDGE;
-$("#quit").onclick = () => confirm("Quit Card Farm? Farming stops until you open it again.") && call("POST", "/api/quit");
-$("#signout").onclick = () => confirm("Sign Card Farm out of Steam? Farming stops.") && post("/api/sign-out");
+$("#quit").onclick = () => confirm("Quit Card Farmer's Market? Farming stops until you open it again.") && call("POST", "/api/quit");
+$("#signout").onclick = () => confirm("Sign out of Steam? Farming stops.") && post("/api/sign-out");
 $("#refresh").onclick = () => post("/api/refresh");
 $("#review-existing").onclick = () => post("/api/review-existing");
 $("#check-items").onclick = () => post("/api/items/check");

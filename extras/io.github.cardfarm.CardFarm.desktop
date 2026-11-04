@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=Card Farm
+Name=Card Farmer's Market
 Comment=Steam trading cards: farm, sell, gems
 Exec=card-farm
 Icon=io.github.cardfarm.CardFarm

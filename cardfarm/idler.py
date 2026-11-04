@@ -122,7 +122,7 @@ def find_library(data_dir):
                 return mine
     hint = ("Install any Proton version from your Steam library (Library > Tools > Proton)"
             if not (WINDOWS or MAC) else "Install any game that uses Steam features (most do)")
-    raise RuntimeError(f"Couldn't find Steam's {LIBRARY} in your Steam library. {hint}, then restart Card Farm.")
+    raise RuntimeError(f"Couldn't find Steam's {LIBRARY} in your Steam library. {hint}, then restart Card Farmer's Market.")
 
 
 # --- what Steam is doing ----------------------------------------------------------------------

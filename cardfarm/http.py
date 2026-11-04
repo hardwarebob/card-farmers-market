@@ -10,10 +10,11 @@ UA = "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
 
 
 class HttpError(Exception):
-    def __init__(self, status, body=""):
-        super().__init__("Steam says too many requests (HTTP 429); Card Farm waits and tries again"
-                         if status == 429 else f"HTTP {status}")
-        self.status, self.body = status, body
+    def __init__(self, status, body="", url=""):
+        where = f" from {urllib.parse.urlsplit(url).path}" if url else ""
+        super().__init__("Steam says too many requests (HTTP 429); waiting before trying again"
+                         if status == 429 else f"HTTP {status}{where}")
+        self.status, self.body, self.url = status, body, url
 
 
 def _quoted(text):
@@ -51,7 +52,7 @@ def download(url, path, timeout=600):
 def get_json(url, **kw):
     status, body = request(url, **kw)
     if status != 200:
-        raise HttpError(status, body[:300])
+        raise HttpError(status, body[:300], url)
     return json.loads(body)
 
 
@@ -60,7 +61,7 @@ def post_json(url, data, **kw):
     try:
         parsed = json.loads(body)
     except ValueError:
-        raise HttpError(status, body[:300])
+        raise HttpError(status, body[:300], url)
     if status != 200 and not isinstance(parsed, dict):
-        raise HttpError(status, body[:300])
+        raise HttpError(status, body[:300], url)
     return parsed
