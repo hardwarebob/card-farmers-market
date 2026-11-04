@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "card-farm"
-version = "0.2.0"
+version = "0.3.0"
 description = "Farm Steam trading cards on Linux, Windows and macOS, then sell them or turn them into gems by your rules"
 readme = "README.md"
 license = "MIT"

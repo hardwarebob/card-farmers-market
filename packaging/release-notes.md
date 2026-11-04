@@ -1,5 +1,11 @@
 Card Farm farms your Steam trading card drops, then sells each card or turns it into gems by rules you set. The Items tab can also list skins, cases and other marketable items, only when you say so.
 
+**New in 0.3:**
+- **Market tab:** your listings next to today's prices, with Reprice (cancel and relist) and Cancel; your sales by day and by game, and an optional notice when something sells.
+- **Gems tab:** pack gems into sacks and sell them; booster packs whose market price beats their gem cost, made and listed in one click.
+- **Cards tab:** card sets you hold most of (what the missing cards cost, Craft once complete), and how long each game took per drop.
+- Updates install themselves: use the Update button at the top when a new version is out.
+
 ## Downloads
 
 | System | File | How to start it |
