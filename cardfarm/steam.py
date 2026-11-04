@@ -462,7 +462,7 @@ def create_booster(session, appid, series=1):
                   cookies=session.cookies(), headers={"Referer": f"{COMMUNITY}/tradingcards/boostercreator/",
                                                       "Origin": COMMUNITY})
     if not r.get("purchase_result"):
-        raise RuntimeError(r.get("message") or "Steam didn't make the booster pack")
+        raise RuntimeError(r.get("message") or f"Steam didn't make the booster pack (its answer: {json.dumps(r)[:120]})")
     return r
 
 

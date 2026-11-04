@@ -666,3 +666,29 @@ def test_recent_sales_from_price_history():
               ["Nov 04 2026 01: +0", 0.20, "3"], ["Nov 04 2026 11: +0", 0.30, "10"], ["Nov 04 2026 12: +0", 0.40, "4"]]
     assert steam.recent_sales(points, now=now) == {"median": 30, "volume": 17}
     assert steam.recent_sales([], now=now) == {"median": None, "volume": 0}
+
+
+def test_boosters_are_made_within_your_gems(world, monkeypatch):
+    f = world["make"]()
+    f.prices.gem_sack = lambda: 69
+    offer = lambda appid, gems: f._booster_offer({"appid": appid, "name": f"G{appid}", "series": 1, "gems": gems,
+                                                  "unavailable": False, "lowest": 120, "median": 110, "volume": 5})
+    f.state["boosters"] = {"options": [offer(1, 600), offer(2, 750), offer(3, 400)], "gems": 1100, "checked": 1}
+    f.make_boosters("profitable")                 # 750 + 400 = 1150 > 1100: the two that fit
+    assert sorted(j["entry"]["booster"]["appid"] for j in f.state["queue"]) in ([1, 3], [2])
+    assert sum(j["entry"]["booster"]["gems"] for j in f.state["queue"]) <= 1100
+    with pytest.raises(ValueError):
+        f.make_boosters([2])                      # what's left doesn't cover it
+
+
+def test_a_booster_unpacks_a_sack_when_loose_gems_fall_short(world, monkeypatch):
+    unpacked = []
+    monkeypatch.setattr(steam, "booster_options", lambda s: ([], 522))
+    monkeypatch.setattr(steam, "gem_stock", lambda s: {"gems": 522, "sacks": 1, "gems_id": "g", "sack_ids": ["S1"]})
+    monkeypatch.setattr(steam, "pack_gems", lambda s, a, n, unpack=False: unpacked.append((a, unpack)))
+    monkeypatch.setattr(steam, "create_booster", lambda s, a, se: (_ for _ in ()).throw(RuntimeError("stop here")))
+    monkeypatch.setattr(steam, "_inventory", lambda s, a, c: [])
+    f = world["make"]()
+    with pytest.raises(RuntimeError, match="stop here"):
+        f._do_booster({"booster": {"appid": 1, "name": "G", "series": 1, "gems": 600}})
+    assert unpacked == [("S1", True)]

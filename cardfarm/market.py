@@ -227,11 +227,18 @@ class MarketParts:
         while); profitable ones show up on the page as they're found."""
         try:
             options, tradable = steam.booster_options(self.session)
+            stock = steam.gem_stock(self.session)
+            gems = tradable + stock["sacks"] * 1000  # sacks can be unpacked when a pack needs them
             now = time.time()
             with self.lock:
                 b = self.state["boosters"]
-                known = {o["appid"]: o for o in b["options"] if now - o.get("priced", 0) < BOOSTER_TTL}
-                b.update(tradable=tradable, of=len(options), done=0, checked=now)
+                known = {o["appid"]: o for o in b["options"]
+                         if now - o.get("priced", 0) < BOOSTER_TTL and o["gems"] <= gems}
+                every = len(options)
+                options = [o for o in options if o["gems"] <= gems]  # only packs you have the gems for
+                b.update(tradable=tradable, gems=gems, of=len(options), every=every, done=0, checked=now)
+                self.state["gems"].update(gems=stock["gems"], sacks=stock["sacks"], gems_id=stock["gems_id"],
+                                          sack_ids=stock["sack_ids"], checked=now)
             for i, o in enumerate(options):
                 self.progress["boosters"] = f"Booster prices: {i + 1} of {len(options)}"
                 if o["appid"] not in known or "volume" not in known[o["appid"]]:
@@ -271,10 +278,23 @@ class MarketParts:
                     worth=bool(buyer and sells and profit > 0))
 
     def make_boosters(self, appids):
+        """Queue these packs ("profitable": the best ones your gems cover, most gain first)."""
         with self.lock:
             options = self.state["boosters"]["options"]
-            picked = [o for o in options if (appids == "profitable" and o.get("worth") and not o["unavailable"])
-                      or o["appid"] in (appids if appids != "profitable" else ())]
+            gems = self.state["boosters"].get("gems", self.state["boosters"].get("tradable", 0))
+            if appids == "profitable":
+                picked, left = [], gems
+                for o in sorted((o for o in options if o.get("worth") and not o["unavailable"]), key=lambda o: -o["profit"]):
+                    if o["gems"] <= left:
+                        picked.append(o)
+                        left -= o["gems"]
+            else:
+                picked = [o for o in options if o["appid"] in appids]
+                if sum(o["gems"] for o in picked) > gems:
+                    raise ValueError(f"that needs {sum(o['gems'] for o in picked):,} gems; you have {gems:,}")
+            if not picked:
+                raise ValueError("no pack worth making fits the gems you have")
+            self.state["boosters"]["gems"] = gems - sum(o["gems"] for o in picked)
         for o in picked:
             o["unavailable"] = True
             self._enqueue("booster", {"id": f"booster-{o['appid']}", "kind": "booster", "booster": o})
@@ -283,6 +303,18 @@ class MarketParts:
     def _do_booster(self, e):
         o = e["booster"]
         hash_name = f"{o['appid']}-{o['name']} Booster Pack"
+        _, tradable = steam.booster_options(self.session)
+        if tradable < o["gems"]:  # unpack sacks for the difference, when there are some
+            stock = steam.gem_stock(self.session)
+            sacks = -(-(o["gems"] - tradable) // 1000)
+            if stock["sacks"] < sacks:
+                raise RuntimeError(f"it needs {o['gems']:,} gems and you have {tradable + stock['sacks'] * 1000:,}")
+            for assetid in stock["sack_ids"]:
+                if sacks <= 0:
+                    break
+                steam.pack_gems(self.session, assetid, 1, unpack=True)
+                sacks -= 1
+            self.log(f"Unpacked {-(-(o['gems'] - tradable) // 1000)} sack(s) of gems for it", "gems")
         before = {a["assetid"] for a, _ in steam._inventory(self.session, *steam.CARDS)}
         steam.create_booster(self.session, o["appid"], o["series"])
         self.log(f"Made a booster pack for {o['name']} from {o['gems']} gems", "gems")

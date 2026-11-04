@@ -425,6 +425,7 @@ td.acts a:hover { color: var(--signal); }
         gems would as sacks. A pack is valued at the lower of its cheapest listing and what it really sold for in the last day,
         and only counts if it sells at all (an old, high asking price doesn't make it worth it). Pricing every game you can
         make one for takes a while the first time; results stay for a day.</p>
+      <p class="note" id="boosters-gems"></p>
       <div class="line"><span>Only packs that sold at least<small>times in the last 24 hours</small></span>
         <input type="number" min="0" data-key="booster_min_sales"></div>
       <div class="scroll">
@@ -619,8 +620,15 @@ function renderMarket(s) {
   $("#sales-note").textContent = s.sales.tracked_since ? `${t.all[0]} sales (${money(t.all[1])}) since ${new Date(s.sales.tracked_since * 1000).toLocaleDateString()}; the last 7 days: ${money(t.week[1])}.` : "";
 }
 
+// the packs worth making that your gems cover together, most gain first
+function boostersThatFit(b) {
+  let left = b.gems ?? b.tradable ?? 0;
+  return b.options.filter(o => o.worth && !o.unavailable).sort((x, y) => y.profit - x.profit)
+    .filter(o => o.gems <= left && ((left -= o.gems), true));
+}
+
 function renderGems(s) {
-  const g = s.gems, b = s.boosters, worth = b.options.filter(o => o.worth && !o.unavailable);
+  const g = s.gems, b = s.boosters, worth = boostersThatFit(b), gemsLeft = b.gems ?? b.tradable ?? 0;
   $("#tab-gems").textContent = worth.length || "";
   $("#g-gems").textContent = g.checked ? g.gems.toLocaleString() : "–";
   $("#g-sacks").textContent = g.checked ? g.sacks : "–";
@@ -632,6 +640,8 @@ function renderGems(s) {
   $("#gems-sell").disabled = !g.sacks;
   $("#boosters-check").disabled = s.busy.includes("boosters");
   $("#boosters-check").textContent = busyText(s, "boosters", "Check booster prices", "Checking…");
+  $("#boosters-gems").textContent = b.checked && b.every > b.of
+    ? `${b.every - b.of} of the ${b.every} packs you could make need more gems than your ${(b.gems || 0).toLocaleString()} (sacks included), so they aren't priced.` : "";
   $("#boosters-make").disabled = !worth.length;
   $("#boosters-make").textContent = worth.length ? `Make & list all worth it (${worth.length})` : "Make & list all worth it";
   $("#boosters-head").hidden = !b.options.length;
@@ -641,7 +651,8 @@ function renderGems(s) {
       <td class="r num">${o.gems}</td><td class="r num hide-sm">${money(Math.round(o.cost))}</td>
       <td class="r num hide-sm nowrap">${o.volume || 0}${o.median ? ` · ${money(o.median)}` : ""}</td><td class="r num">${o.buyer ? money(o.receive) : '<span class="faint">none</span>'}</td>
       <td class="r num nowrap">${o.profit > 0 ? "+" : ""}${money(Math.round(o.profit))}</td>
-      <td class="acts">${o.worth && !o.unavailable ? `<button data-booster="${o.appid}">Make &amp; list</button>` : ""}</td></tr>`).join(""));
+      <td class="acts">${o.worth && !o.unavailable ? (o.gems <= gemsLeft ? `<button data-booster="${o.appid}">Make &amp; list</button>`
+        : `<span class="small faint">needs ${o.gems} gems</span>`) : ""}</td></tr>`).join(""));
 }
 
 function renderSets(s) {
@@ -815,7 +826,7 @@ $("#gems-check").onclick = () => post("/api/gems/check");
 $("#gems-pack").onclick = () => confirm(`Pack ${Math.floor(state.gems.gems / 1000) * 1000} gems into sacks?`) && post("/api/gems/pack");
 $("#gems-sell").onclick = () => confirm(`List your ${state.gems.sacks} sack${state.gems.sacks > 1 ? "s" : ""} of gems at today's price?`) && post("/api/gems/sell");
 $("#boosters-check").onclick = () => post("/api/boosters/check");
-$("#boosters-make").onclick = () => { const n = state.boosters.options.filter(o => o.worth && !o.unavailable).length;
+$("#boosters-make").onclick = () => { const n = boostersThatFit(state.boosters).length;
   return confirm(`Make ${n} booster pack${n > 1 ? "s" : ""} from your gems and list them? Each listing needs your OK in the Steam app.`)
     && post("/api/boosters/make", {appids: "profitable"}); };
 $("#sets-check").onclick = () => post("/api/sets/check");
