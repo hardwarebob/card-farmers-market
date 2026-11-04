@@ -3,26 +3,58 @@
 Farm your Steam trading card drops on Linux, Windows or macOS, then sell each card or turn it into gems by rules you set.
 Card Farmer's Market is a desktop app with its own window. It keeps farming in the background when you close it.
 
+![The Cards tab](docs/cards.png)
+
+### Cards
+
 - **Native idling.** It tells your running Steam client that a game is playing, the way the game itself would, through Steam's own API library. No Wine, Proton or helper programs.
-- **Notices stalls.** It checks your badges page as it goes. A game that stops dropping cards gets restarted, then set aside for a while. When Steam restarts, the games are started again.
+- **Notices stalls.** It checks your badges page as it goes. A game that stops dropping cards gets restarted, then set aside for a while. Games that never drop while idled (Counter-Strike 2 is one) are set aside for a week. When Steam restarts, the games are started again.
 - **Sell or gems, decided per card.** Each card is priced against the market and against its gem value, using the current Sack of Gems price.
   - For selling and for gems separately, you choose **Auto**, **Review** (the card waits for you in the window) or **Off**.
   - You can also keep foils, keep every card from chosen games, set a minimum price, and match the lowest listing or undercut it by 1¢.
   - Only real card drops are handled automatically. A card that turns up any other way (a trade, a booster pack, one you bought to finish a badge) waits for your review.
 - **Sort the cards you already have.** "Sort cards I have" runs your whole inventory through the same rules. Cards already listed and waiting for confirmation are left out.
-- **Items too, when you ask.** The Items tab finds your other inventories (Counter-Strike 2, Team Fortress 2, the Steam inventory's backgrounds and emoticons, and so on) and prices what's marketable in the ones you switch on. Nothing is listed unless you say so: "New items" is Off until you change it, and its Auto mode only lists items that arrive after you turn it on.
-- **Pauses while you play.** When you launch a game from Steam, farming waits until you're done.
-- **Signs in by QR code** through the Steam mobile app. Card Farmer's Market never sees your password.
+- **Finish sets.** Sets you hold most of are listed with what the missing cards cost. "Buy & craft" checks every missing card's price against your limit before buying anything, then crafts the badge. A set's cards aren't sold while you're finishing it.
 
-Market listings still need your OK in the Steam mobile app (Confirmations → Confirm all). Card Farmer's Market
-tells you when some are waiting. Prices are looked up again just before each listing.
+### Items
+
+The Items tab finds your other inventories (Counter-Strike 2, Team Fortress 2, the Steam inventory's backgrounds and emoticons, and so on) and prices what's marketable in the ones you switch on. Nothing is listed unless you say so: "New items" is Off until you change it, and its Auto mode only lists items that arrive after you turn it on. Items that haven't sold recently are left alone, so an old, high asking price isn't copied.
+
+### Market
+
+![The Market tab](docs/market.png)
+
+- **Your listings next to today's prices.** A listing counts as undercut when what really sells (the lower of the cheapest listing and the day's median sale) is below yours. "Reprice" cancels it and lists it again at that price; listings can also be cancelled after a number of days.
+- **What you've earned.** A chart of the last 30 days, sales by day and by game, and an optional notice when something sells.
+
+### Gems
+
+- Pack gems into Sacks of Gems and sell them.
+- **Booster packs worth making.** A pack is worth it when it sells for more than its gems would as sacks. It's valued at what it really sold for in the last day, and only counts if it sells at all. "Make & list all worth it" makes them with the gems you have.
+- **Booster packs you have.** Each one is either sold as a pack or opened into 3 cards, whichever is worth more (or opened when it's for a set you're finishing). Opened cards go to the review list.
+
+### Level up
+
+![The Level up tab](docs/levelup.png)
+
+Pick a Steam level and a budget. It finds the cheapest badge crafts: sets you hold part of (counting what your own cards would sell for instead), and the market's cheapest full sets. **Level up** then buys the cards and crafts the badges, either **now** at the cheapest listings, or with **buy orders** about 15% under the cheapest price that fill over hours or days (unfilled orders are cancelled after a week, or when you say). Each set is crafted as soon as its cards are in.
+
+### Everywhere
+
+- **Pauses while you play.** When you launch a game from Steam, farming waits until you're done.
+- **Easy on Steam's market.** Prices are looked up while signed in, a few seconds apart, and kept for a while. If Steam still says "too many requests", market lookups pause (5, then 10, then 30 minutes) and the window says when they'll start again.
+- **Signs in by QR code** through the Steam mobile app. Card Farmer's Market never sees your password.
+- **Updates itself.** When a new version is out, an Update button appears at the top of the window.
+
+Market listings and purchases may need your OK in the Steam mobile app (Confirmations → Confirm all). Card Farmer's Market
+tells you when some are waiting. Prices are looked up again just before each listing or purchase.
 
 ## Download
 
 Get the latest version from the [Releases page](https://github.com/maybeimdreaming/card-farmers-market/releases):
 
 - **Windows 10/11:** `Card-Farm-Windows.zip`. Unzip it and run `Card Farm.exe`. Windows may say the publisher is unknown: **More info → Run anyway**. Closing the window while farming minimises it; use **Quit** at the top of the page to stop.
-- **macOS (Apple silicon):** `Card-Farm-macOS.zip`. Move `Card Farm` to Applications; the first time, right-click it and choose **Open** (it isn't notarised).
+- **macOS:** `Card-Farm-macOS.zip` for Apple silicon (M1 and later), `Card-Farm-macOS-Intel.zip` for Intel Macs. Move `Card Farm` to Applications; the first time, right-click it and choose **Open** (it isn't notarised).
 - **Linux:** `card-farm.pyz`. `chmod +x card-farm.pyz && ./card-farm.pyz`, or install with pipx as below.
 
 Steam must be running and signed in, and you need the Steam mobile app with Steam Guard for the sign-in and for confirming market listings. Card Farmer's Market finds Steam's own API library (`steam_api64.dll`, `libsteam_api.dylib` or `libsteam_api.so`) in any game you have installed and doesn't ship a copy; on Linux, any Proton version has one.
@@ -75,12 +107,15 @@ nobody is selling the card, or when the price is under your minimum. Gems are us
 little, so most cards with a buyer end up sold.
 
 Items other than cards are only ever sold (or kept). One is offered for sale when someone else is
-selling it and the price is at least your "Don't list under" amount.
+selling it, it has sold recently, and the price is at least your "Don't list under" amount.
+
+Buying (Finish sets and Level up) uses your Steam wallet, and never goes over the limit you set: prices are
+checked again right before anything is bought, and a set that got dearer is skipped whole.
 
 ## Good to know
 
 - Card drops come at Steam's pace, about one every 20–40 minutes of play per game. No tool can change that. What Card Farmer's Market saves is the time lost when an idler silently stalls.
-- Turning a card into gems can't be undone. Listings can be cancelled from the Steam Market page.
+- Turning a card into gems, opening a booster pack and crafting a badge can't be undone. Listings and buy orders can be cancelled in the window or on the Steam Market page.
 - Card Farmer's Market doesn't run a web server or open a network port. Its window talks to the farm inside the same program, and only Steam's own servers are contacted.
 - The Windows and macOS builds aren't signed by Microsoft or Apple, so the first start shows a warning (see Download).
 - Card Farmer's Market is not affiliated with Valve. Use it on your own account, at your own pace.
@@ -94,6 +129,10 @@ python3 -m cardfarm                # window
 python3 -m cardfarm --background   # farm without opening the window
 python packaging/build.py linux    # dist/card-farm.pyz; windows / macos need: pip install pyinstaller pywebview pillow
 ```
+
+To check the layout after changing the page, `python3 tools/screenshots.py OUT_DIR` opens the real window on a
+hidden display (needs `cage`), fills every tab with made-up data, and saves each tab wide, narrow and in the
+light theme. It fails if anything scrolls sideways or the page's script throws. The pictures above come from it.
 
 Releases are built by `.github/workflows/release.yml` when a `v*` tag is pushed. Each build is
 opened once on a real Windows and macOS machine to check its window works before it's published.
