@@ -75,7 +75,15 @@ class MarketParts:
                 g = games.setdefault(game, [0, 0])
                 g[0] += 1
                 g[1] += s["received"]
+        daily = {}
+        for s_ in self.state["sales"]:
+            if s_["at"] >= today - 29 * 86400:
+                d = daily.setdefault(time.strftime("%Y-%m-%d", time.localtime(s_["at"])), [0, 0])
+                d[0] += 1
+                d[1] += s_["received"]
+        last30 = [time.strftime("%Y-%m-%d", time.localtime(today - k * 86400 + 43200)) for k in range(29, -1, -1)]
         return {"totals": totals, "days": sorted(days.items(), reverse=True),
+                "daily": [[d, *daily.get(d, [0, 0])] for d in last30],
                 "games": sorted(games.items(), key=lambda kv: -kv[1][1])[:12],
                 "recent": self.state["sales"][:20], "tracked_since": min((s["at"] for s in self.state["sales"]), default=0)}
 
@@ -397,28 +405,30 @@ class MarketParts:
             self.log(f"Stopped finishing the {done['game']} set; its cards follow your rules again")
         self.save()
 
+    def _place_order(self, hash_name, price, quantity=1):
+        """Place a buy order, waiting (up to 10 min) for its OK in the Steam app when Steam asks for
+        one: once given, the same order sent again with the confirmation's id goes through."""
+        name = hash_name.split("-", 1)[1]
+        order = steam.create_buy_order(self.session, hash_name, price, quantity)
+        if "confirm" not in order:
+            return order
+        self.notify("Confirm the purchase", f"Approve buying {name} in the Steam mobile app (Confirmations).")
+        self.log(f"Waiting for you to confirm buying {name} in the Steam mobile app (up to 10 min)", "warn")
+        self.progress["sets"] = f"Confirm buying {name} in the Steam app…"
+        try:
+            for _ in range(120):
+                time.sleep(5)
+                again = steam.create_buy_order(self.session, hash_name, price, quantity, confirmation=order["confirm"])
+                if "orderid" in again:
+                    return again
+            raise RuntimeError(f"buying {name} wasn't confirmed in the Steam app within 10 minutes")
+        finally:
+            self.progress.pop("sets", None)
+
     def _buy(self, hash_name, price):
         """Buy one at `price` through a buy order; True once Steam says it was bought. An order
         that doesn't fill within a few seconds (the listing sold) is cancelled again."""
-        name = hash_name.split("-", 1)[1]
-        order = steam.create_buy_order(self.session, hash_name, price)
-        if "confirm" in order:
-            # Steam wants each purchase OK'd in the mobile app; once it is, sending the order again
-            # with the confirmation's id goes through
-            self.notify("Confirm the purchase", f"Approve buying {name} in the Steam mobile app (Confirmations).")
-            self.log(f"Waiting for you to confirm buying {name} in the Steam mobile app (up to 10 min)", "warn")
-            self.progress["sets"] = f"Confirm buying {name} in the Steam app…"
-            try:
-                for _ in range(120):
-                    time.sleep(5)
-                    again = steam.create_buy_order(self.session, hash_name, price, confirmation=order["confirm"])
-                    if "orderid" in again:
-                        order = again
-                        break
-                else:
-                    raise RuntimeError(f"buying {name} wasn't confirmed in the Steam app within 10 minutes")
-            finally:
-                self.progress.pop("sets", None)
+        order = self._place_order(hash_name, price)
         for _ in range(8):
             time.sleep(2)
             try:
@@ -466,7 +476,7 @@ class MarketParts:
                 time.sleep(5)  # bought cards take a moment to reach the inventory
         with self.lock:
             more = any(j["entry"].get("kind") == "set" and j["entry"]["offer"]["appid"] == o["appid"] and j["entry"] is not e
-                       for j in self.state["queue"])
+                       for j in self.state["queue"]) or any(w["appid"] == o["appid"] for w in self.state.get("patient", []))
             if not more:
                 self.state["finishing"].pop(str(o["appid"]), None)
         self.log(f"Crafted the {o['game']} badge" + (f" (bought cards for ${spent / 100:.2f})" if spent else ""), "gems")
@@ -554,10 +564,20 @@ class MarketParts:
                 "reaches": level_after(lu["level"], lu["xp_to_next"], xp), "short": max(0, need - xp)}
 
     def level_up(self):
-        """Queue the plan: each craft buys its set's cards and crafts the badge."""
+        """Queue the plan: each craft buys its set's cards (now, or through buy orders that fill
+        over time) and crafts the badge."""
         plan = self.levelup_plan()
         if not plan["crafts"]:
             raise ValueError("nothing to do: find the options first, or raise the budget")
+        if self.settings["levelup_buying"] == "orders":
+            with self.lock:
+                for c in plan["crafts"]:
+                    self.state["finishing"][str(c["appid"])] = {"game": c["game"], "since": time.time()}
+                self._enqueue("orders", {"id": f"orders-{int(time.time())}", "kind": "orders", "crafts": plan["crafts"]})
+                self.state["levelup"]["options"] = []
+            self.log(f"Levelling up through buy orders: {len(plan['crafts'])} badge levels; orders go up now and fill over time")
+            self.save()
+            return
         with self.lock:
             for c in plan["crafts"]:
                 self.state["finishing"][str(c["appid"])] = {"game": c["game"], "since": time.time()}
@@ -591,3 +611,155 @@ def level_after(level, xp_to_next, gained):
         level += 1
         xp_to_next = xp_for_level(level)
     return level
+
+
+class HeldBoosters:
+    """Booster packs you have: sell each or open it for its 3 cards. Mixed into Farm."""
+
+    def check_held(self):
+        self._in_background("held", self._check_held)
+
+    def _check_held(self):
+        try:
+            packs = steam.boosters_held(self.session)
+            useful = ({str(o["appid"]) for o in self.state["sets"]["offers"]} | set(self.state["finishing"])
+                      | {str(o["appid"]) for o in self.state["levelup"].get("options", [])})
+            out = []
+            for i, p in enumerate(packs):
+                self.progress["held"] = f"Pricing your booster packs: {i + 1} of {len(packs)}"
+                try:
+                    stats = self.prices.item_stats(753, p["hash"]) if p["marketable"] else {"lowest": None, "median": None, "volume": 0}
+                    cards = [c for h, c in self.prices.game_cards(p["appid"]).items() if "(Foil" not in h and c]
+                except steam.HttpError as e:
+                    if e.status == 429:
+                        self.log("Pricing your booster packs paused: Steam asked to slow down; check again later", "warn")
+                        break
+                    raise
+                pack = rules.asking_price(rules.realistic(stats), self.settings)
+                sell = rules.received(pack) if pack and stats.get("volume", 0) else 0
+                opened = round(3 * sum(rules.received(rules.asking_price(c, self.settings)) for c in cards) / len(cards)) if cards else 0
+                helps = str(p["appid"]) in useful
+                out.append(dict(p, sell=sell, opened=opened, volume=stats.get("volume", 0), helps=helps,
+                                verdict="open" if helps or opened > sell else "sell"))
+            with self.lock:
+                self.state["held"] = {"packs": out, "checked": time.time()}
+            if out:
+                self.log(f"Booster packs checked: {len(out)} ({sum(1 for p in out if p['verdict'] == 'open')} worth opening)")
+        except Exception as e:
+            self.log(f"Couldn't check your booster packs: {e}", "warn")
+        finally:
+            self.progress.pop("held", None)
+
+    def decide_held(self, ids, action):
+        """sell / open these packs ("suggested": each by its suggestion)."""
+        with self.lock:
+            packs = self.state.setdefault("held", {"packs": [], "checked": 0})["packs"]
+            picked = [p for p in packs if ids == "suggested" or p["assetid"] in ids]
+            self.state["held"]["packs"] = [p for p in packs if p not in picked]
+            for p in picked:
+                act = p["verdict"] if action == "suggested" else action
+                if act == "open":
+                    self._enqueue("open", {"id": p["assetid"], "kind": "pack", "pack": p})
+                elif p["marketable"]:
+                    item = {"assetid": p["assetid"], "appid": 753, "context": 6, "amount": 1, "name": p["name"],
+                            "hash": p["hash"], "game": p["game"], "icon": p["icon"], "kind": "Booster Pack"}
+                    self._enqueue("sell", {"id": p["assetid"], "kind": "item", "item": item, "detail": {}})
+        self.save()
+
+    def _do_open(self, e):
+        p = e["pack"]
+        cards = steam.unpack_booster(self.session, p["appid"], p["assetid"])
+        with self.lock:  # its cards turn up as new ones: straight to review, not taken for drops
+            self.state.setdefault("opened", {})[str(p["appid"])] = self.state.get("opened", {}).get(str(p["appid"]), 0) + len(cards)
+        self.log(f"Opened the {p['game']} booster pack: {', '.join(cards)}", "gems")
+        self._next_inventory = 0
+        return 0
+
+
+ORDER_DISCOUNT = 0.15  # buy orders go this far under the cheapest ask (never under Steam's 3c minimum)
+
+
+def order_price(lowest):
+    """What to offer in a buy order when the cheapest ask is `lowest`."""
+    return max(3, min(lowest - 1, round(lowest * (1 - ORDER_DISCOUNT)))) if lowest and lowest > 3 else 3
+
+
+class PatientBuying:
+    """Level up through buy orders: cheaper than buying at the lowest ask, but they take a while to
+    fill. Orders are watched every half hour; a set crafts once its cards are all in. Mixed into Farm."""
+
+    def _do_orders(self, e):
+        """One buy order per card (several of the same card for several levels of a set)."""
+        crafts, wanted = e["crafts"], {}
+        for c in crafts:
+            for h in c["missing_hashes"]:
+                wanted[h] = wanted.get(h, 0) + 1
+        placed = []
+        for h, quantity in wanted.items():
+            game = int(h.split("-", 1)[0])
+            price = order_price(self.prices.game_cards(game).get(h))
+            order = self._place_order(h, price, quantity)
+            placed.append({"orderid": order["orderid"], "hash": h, "price": price, "quantity": quantity, "placed": time.time()})
+        with self.lock:
+            self.state.setdefault("orders", []).extend(placed)
+            self.state.setdefault("patient", []).extend(
+                {"appid": c["appid"], "game": c["game"], "hashes": c["missing_hashes"]} for c in crafts)
+        cost = sum(o["price"] * o["quantity"] for o in placed)
+        self.log(f"Placed {len(placed)} buy orders for {len(crafts)} badge level(s), ${cost / 100:.2f} if they all fill")
+        self._next_orders = 0
+        return 0
+
+    def _check_orders(self):
+        """Which orders filled, which sets are complete (craft them), which orders waited too long."""
+        if not self.state.get("patient") and not self.state.get("orders"):
+            return
+        still = steam.buy_orders(self.session)
+        now, too_old = time.time(), self.settings["order_days"] * 86400
+        with self.lock:
+            for o in list(self.state["orders"]):
+                if o["orderid"] not in still:
+                    self.state["orders"].remove(o)  # filled (or cancelled on Steam)
+                elif too_old and now - o["placed"] > too_old:
+                    o["cancel"] = True
+        for o in [o for o in self.state["orders"] if o.get("cancel")]:
+            steam.cancel_buy_order(self.session, o["orderid"])
+            with self.lock:
+                self.state["orders"].remove(o)
+            self.log(f"Cancelled the buy order for {o['hash'].split('-', 1)[1]}: unfilled after {self.settings['order_days']} days", "warn")
+        held = {}
+        for c in steam.cards_in_inventory(self.session):
+            if not c["foil"]:
+                held[c["hash"]] = held.get(c["hash"], 0) + 1
+        ready = []
+        with self.lock:
+            for w in list(self.state["patient"]):
+                if all(held.get(h, 0) > 0 for h in w["hashes"]):
+                    for h in w["hashes"]:
+                        held[h] -= 1
+                    self.state["patient"].remove(w)
+                    ready.append(w)
+        for w in ready:
+            self._enqueue("set", {"id": f"set-{w['appid']}-{int(now)}", "kind": "set",
+                                  "offer": {"appid": w["appid"], "game": w["game"], "missing_hashes": [], "missing": []}})
+            self.log(f"The {w['game']} set is complete; crafting its badge")
+
+    def cancel_orders(self, ids):
+        """Cancel these buy orders ("all": every one Card Farmer's Market placed)."""
+        with self.lock:
+            picked = [o for o in self.state.get("orders", []) if ids == "all" or o["orderid"] in ids]
+        for o in picked:
+            steam.cancel_buy_order(self.session, o["orderid"])
+            with self.lock:
+                self.state["orders"].remove(o)
+        if picked:
+            self.log(f"Cancelled {len(picked)} buy order(s); the sets waiting on them stay listed until you stop them")
+        self.save()
+
+    def stop_waiting(self, appid):
+        """Give up on a set waiting for orders: cancel its orders and release its cards."""
+        with self.lock:
+            waiting = [w for w in self.state.get("patient", []) if w["appid"] == appid]
+            hashes = {h for w in waiting for h in w["hashes"]}
+            self.state["patient"] = [w for w in self.state.get("patient", []) if w["appid"] != appid]
+        self.cancel_orders({o["orderid"] for o in self.state.get("orders", []) if o["hash"] in hashes})
+        self.stop_finishing(appid)

@@ -30,6 +30,8 @@ DEFAULTS = {
     "booster_min_sales": 2,      # a booster pack is only worth making if at least this many sold in the last day
     "levelup_target": 0,         # Steam level to reach (0: the next one)
     "levelup_budget_cents": 100, # most to spend on one level-up plan
+    "levelup_buying": "now",     # now: at the cheapest listings | orders: buy orders a bit under them, filling over time
+    "order_days": 7,             # buy orders still unfilled after this many days are cancelled (0: never)
     "set_budget_cents": 50,      # most to spend buying the missing cards of one set
 }
 MODES = ("auto", "review", "off")
@@ -56,13 +58,15 @@ def clean(patch):
             out[k] = max(1, min(32, int(v)))
         elif k in ("stall_minutes", "min_sell_cents", "items_min_cents", "reprice_after_hours", "reprice_gap_cents",
                    "cancel_after_days", "set_budget_cents", "booster_min_sales", "items_min_sales", "levelup_target",
-                   "levelup_budget_cents"):
+                   "levelup_budget_cents", "order_days"):
             out[k] = max(0, int(v))
         elif k in ("sell", "gems", "items_new") and v in MODES:
             out[k] = v
         elif k == "order" and v in ("value", "most", "fewest"):
             out[k] = v
         elif k == "pricing" and v in ("match", "undercut"):
+            out[k] = v
+        elif k == "levelup_buying" and v in ("now", "orders"):
             out[k] = v
         elif k == "foils" and v in ("sell", "keep"):
             out[k] = v

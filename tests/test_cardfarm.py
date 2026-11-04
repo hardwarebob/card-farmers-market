@@ -381,29 +381,38 @@ def test_pyz_update_swaps_the_file_after_card_farm_exits(tmp_path):
 
 
 @pytest.mark.skipif(sys.platform not in ("win32", "darwin"), reason="the Windows and macOS installers")
-def test_app_update_swaps_the_app_after_card_farm_exits(tmp_path):
-    """Runs on the release builders: the real helper replaces a stand-in app with the new one."""
+@pytest.mark.parametrize("new_name", ["Card Farm", "Card Farmer's Market"])
+def test_app_update_swaps_the_app_after_card_farm_exits(tmp_path, new_name):
+    """Runs on the release builders: the real helper replaces a stand-in Card Farm with the new one,
+    under the old name or the new one."""
     import shutil
     import subprocess
     windows = sys.platform == "win32"
-    inner = "Card Farm" if windows else "Card Farm.app"
+    inner = new_name if windows else f"{new_name}.app"
     new_app = tmp_path / "new" / inner
     (new_app if windows else new_app / "Contents" / "MacOS").mkdir(parents=True)
-    marker = "Card Farm.exe" if windows else "Contents/MacOS/Card Farm"
+    marker = f"{new_name}.exe" if windows else f"Contents/MacOS/{new_name}"
     (new_app / marker).write_text("new")
     if windows:
         package = shutil.make_archive(str(tmp_path / "Card-Farm-Windows"), "zip", tmp_path / "new", inner)
     else:
         package = str(tmp_path / "Card-Farm-macOS.zip")
         subprocess.run(["ditto", "-c", "-k", "--keepParent", str(new_app), package], check=True)
-    old_app = tmp_path / "installed" / inner
-    (old_app / marker).parent.mkdir(parents=True)
-    (old_app / marker).write_text("old")
+    old_inner, old_marker = ("Card Farm", "Card Farm.exe") if windows else ("Card Farm.app", "Contents/MacOS/Card Farm")
+    old_app = tmp_path / "installed" / old_inner
+    (old_app / old_marker).parent.mkdir(parents=True)
+    (old_app / old_marker).write_text("old")
     waiter = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1)"])
     threading.Thread(target=waiter.wait).start()
     update.install(package, relaunch=False, wait_for=waiter.pid, target=str(old_app)).wait(120)
     logs = "\n".join(f"{p.name}: {p.read_text(errors='replace')}" for p in pathlib.Path(package).parent.glob("update*.log"))
-    assert (old_app / marker).read_text() == "new", logs or "no logs"
+    if windows:  # the same folder, now with the new program in it (and no stale old one)
+        assert (old_app / marker).read_text() == "new", logs or "no logs"
+        assert new_name == "Card Farm" or not (old_app / old_marker).exists()
+    else:        # the app sits where the old one was, under its new name
+        placed = old_app.parent / inner
+        assert (placed / marker).read_text() == "new", logs or "no logs"
+        assert new_name == "Card Farm" or not old_app.exists()
 
 
 # --- market, gems, boosters, sets -------------------------------------------------------------
@@ -530,7 +539,7 @@ def test_market_page_listings_leave_out_your_own():
 def buying_world(monkeypatch, fills=True):
     log = []
     monkeypatch.setattr(market_mod.time, "sleep", lambda x: None)
-    monkeypatch.setattr(steam, "create_buy_order", lambda s, h, p, **kw: log.append(("order", h, p)) or {"orderid": h})
+    monkeypatch.setattr(steam, "create_buy_order", lambda s, h, p, q=1, **kw: log.append(("order", h, p) if q == 1 else ("order", h, p, q)) or {"orderid": h})
     monkeypatch.setattr(steam, "buy_order_status", lambda s, o: {"purchased": 1 if fills else 0})
     monkeypatch.setattr(steam, "cancel_buy_order", lambda s, o: log.append(("cancel", o)))
     monkeypatch.setattr(steam, "card_set", lambda s, a: {"level": 0, "cards": []})
@@ -706,3 +715,70 @@ def test_a_game_that_never_drops_when_idled_is_set_aside_for_a_week(world):
     world["badges"] = [{"appid": 730, "name": "CS2", "drops": 13, "earned": 65}]   # you played it: a drop
     f._refresh_badges()
     assert "730" not in f.state["no_idle"]
+
+
+def test_held_packs_suggest_open_or_sell(world, monkeypatch):
+    monkeypatch.setattr(steam, "boosters_held", lambda s: [
+        {"assetid": "p1", "appid": 10, "name": "G Booster Pack", "game": "G", "hash": "10-G Booster Pack", "icon": "", "marketable": True},
+        {"assetid": "p2", "appid": 11, "name": "H Booster Pack", "game": "H", "hash": "11-H Booster Pack", "icon": "", "marketable": True}])
+    f = world["make"]()
+    f.prices.item_stats = lambda a, h: {"lowest": 60, "median": 58, "volume": 8} if h.startswith("10") else {"lowest": 5, "median": 5, "volume": 8}
+    f.prices.game_cards = lambda appid: {f"{appid}-A": 6, f"{appid}-B": 7}
+    f._check_held()
+    got = {p["assetid"]: p["verdict"] for p in f.state["held"]["packs"]}
+    assert got == {"p1": "sell", "p2": "open"}           # the pack sells for more / the cards are worth more
+    f.decide_held("suggested", "suggested")
+    assert sorted((j["action"], j["entry"]["id"]) for j in f.state["queue"]) == [("open", "p2"), ("sell", "p1")]
+
+
+def test_cards_from_an_opened_pack_go_straight_to_review(world, monkeypatch):
+    monkeypatch.setattr(steam, "unpack_booster", lambda s, a, i: ["A", "B", "C"])
+    f = world["make"]()
+    world["badges"] = [{"appid": 10, "name": "Game", "drops": 3, "earned": 3}]
+    f._refresh_badges(); f._check_inventory()                           # first look
+    f._do_open({"pack": {"appid": 10, "assetid": "p", "game": "Game"}})
+    world["cards"] = [card(assetid="n1")]
+    f._check_inventory()
+    assert [e["id"] for e in f.state["review"]] == ["n1"] and f.state["queue"] == []
+
+
+def test_buy_orders_go_a_little_under_the_ask_never_under_3c():
+    assert market_mod.order_price(20) == 17 and market_mod.order_price(4) == 3 and market_mod.order_price(3) == 3
+    assert market_mod.order_price(None) == 3
+
+
+def test_level_up_by_buy_orders(world, monkeypatch):
+    log = buying_world(monkeypatch)
+    f = world["make"]()
+    f.update_settings({"levelup_buying": "orders"})
+    f.prices.game_cards = lambda appid: {"7-A": 10, "7-B": 3}
+    f.state["levelup"] = {"level": 9, "xp": 0, "xp_to_next": 200, "maxed": 0, "checked": 1,
+                          "options": [{"appid": 7, "game": "G", "levels": 2, "cost": 13, "forgone": 0, "source": "market",
+                                       "missing_hashes": ["7-A", "7-B"], "missing": ["A", "B"]}]}
+    f.level_up()
+    f._do("place", f.state["queue"].pop(0)["entry"])
+    assert ("order", "7-A", 8, 2) in log and ("order", "7-B", 3, 2) in log      # two of each, under the ask
+    assert len(f.state["patient"]) == 2 and f.finishing(7)
+    # one full set has come in, one A and one B
+    monkeypatch.setattr(steam, "buy_orders", lambda s: {"7-A": 1, "7-B": 1})
+    monkeypatch.setattr(steam, "cards_in_inventory", lambda s: [card(assetid="1", hash="7-A", appid=7), card(assetid="2", hash="7-B", appid=7)])
+    f._check_orders()
+    assert [j["entry"]["kind"] for j in f.state["queue"]] == ["set"] and len(f.state["patient"]) == 1
+    # a week later, still unfilled: cancelled
+    for o in f.state["orders"]:
+        o["placed"] -= 8 * 86400
+    f._check_orders()
+    assert f.state["orders"] == [] and ("cancel", "7-A") in log
+
+
+def test_intel_macs_get_their_own_download():
+    assert update.asset_names("macos", "x86_64")[-1] == "Card-Farm-macOS-Intel.zip"
+    assert update.asset_names("macos", "arm64")[-1] == "Card-Farm-macOS.zip"
+
+
+def test_new_download_names_are_preferred_and_old_ones_still_found():
+    new = release("v0.4.0", names=("Card-Farmers-Market-Windows.zip", "Card-Farm-Windows.zip", "card-farmers-market.pyz"))
+    assert update.newest([new], "v0.3.0-beta.9", "windows")["url"].endswith("/Card-Farmers-Market-Windows.zip")
+    assert update.newest([new], "v0.3.0-beta.9", "pyz")["url"].endswith("/card-farmers-market.pyz")
+    old = release("v0.4.0", names=("Card-Farm-Windows.zip",))
+    assert update.newest([old], "v0.3.0-beta.9", "windows")["url"].endswith("/Card-Farm-Windows.zip")

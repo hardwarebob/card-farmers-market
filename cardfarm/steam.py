@@ -569,10 +569,16 @@ def buy_order_status(session, orderid):
                     cookies=session.cookies())
 
 
+def buy_orders(session):
+    """Your buy orders still waiting on the market: {orderid: quantity still wanted}."""
+    d = _patient(lambda: get_json(f"{COMMUNITY}/market/mylistings/render/?query=&start=0&count=10&norender=1",
+                                  cookies=session.cookies()))
+    return {str(o.get("buy_orderid")): int(o.get("quantity_remaining") or 0) for o in d.get("buy_orders") or []}
+
+
 def open_buy_orders(session):
     """Ids of your buy orders still waiting on the market."""
-    d = get_json(f"{COMMUNITY}/market/mylistings/render/?query=&start=0&count=10&norender=1", cookies=session.cookies())
-    return {str(o.get("buy_orderid")) for o in d.get("buy_orders") or []}
+    return set(buy_orders(session))
 
 
 def cancel_buy_order(session, orderid):
@@ -621,3 +627,26 @@ def cheapest_cards(prices, pages):
         if not d.get("results"):
             break
     return out
+
+
+# --- booster packs you have -----------------------------------------------------------------------
+def boosters_held(session):
+    """Booster packs in the inventory: [{assetid, appid (the game), name, game, hash, icon, marketable}]"""
+    out = []
+    for a, x in _inventory(session, *CARDS):
+        if tags(x).get("item_class", {}).get("internal_name") == "item_class_5":
+            out.append({"assetid": a["assetid"], "appid": int(x.get("market_fee_app") or 0), "name": x.get("name", ""),
+                        "game": tags(x).get("Game", {}).get("localized_tag_name", ""), "hash": x.get("market_hash_name", ""),
+                        "icon": x.get("icon_url", ""), "marketable": bool(x.get("marketable"))})
+    return out
+
+
+def unpack_booster(session, appid, assetid):
+    """Open a booster pack; returns the cards' names (3, sometimes one of them foil)."""
+    r = post_json(f"{COMMUNITY}/profiles/{session.steamid}/ajaxunpackbooster/",
+                  {"appid": appid, "communityitemid": assetid, "sessionid": session.sessionid}, cookies=session.cookies(),
+                  headers={"Referer": f"{COMMUNITY}/profiles/{session.steamid}/inventory/", "Origin": COMMUNITY})
+    items = r.get("rgItems") or []
+    if not items:
+        raise RuntimeError(r.get("message") or f"Steam didn't open the pack (its answer: {json.dumps(r)[:120]})")
+    return [i.get("name", "?") + (" (foil)" if i.get("foil") else "") for i in items]

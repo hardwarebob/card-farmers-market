@@ -8,7 +8,7 @@
 /* A trader's ledger: paper, ink, ruled lines. Square corners, condensed caps, tabular figures. */
 :root {
   --paper: #f2ede2; --sheet: #f8f5ee; --ink: #191714; --faint: #6f675b; --rule: #c9c0ae;
-  --signal: #d9480f; --signal-ink: #fff8f0; --sell: #2b7a3d; --gems: #6a3fc9; --warn: #b3261e;
+  --signal: #d9480f; --signal-ink: #fff8f0; --sell: #2b7a3d; --gems: #6a3fc9; --warn: #b3261e; --chart: #2b7a3d;
   --head: "Archivo Narrow", "Roboto Condensed", "Noto Sans Display", "Noto Sans", "Arial Narrow", sans-serif;
   --body: "Noto Sans", "Inter", system-ui, sans-serif;
   --mono: "JetBrains Mono", "Hack", "DejaVu Sans Mono", ui-monospace, monospace;
@@ -16,19 +16,19 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --paper: #0f0e0c; --sheet: #171512; --ink: #ece5d6; --faint: #958b7a; --rule: #3a352d;
-    --signal: #f59f00; --signal-ink: #120f08; --sell: #69c27e; --gems: #a98af2; --warn: #ff7b6e;
+    --signal: #f59f00; --signal-ink: #120f08; --sell: #69c27e; --gems: #a98af2; --warn: #ff7b6e; --chart: #52a466;
   }
 }
 :root[data-theme="dark"] {
   --paper: #0f0e0c; --sheet: #171512; --ink: #ece5d6; --faint: #958b7a; --rule: #3a352d;
-  --signal: #f59f00; --signal-ink: #120f08; --sell: #69c27e; --gems: #a98af2; --warn: #ff7b6e;
+  --signal: #f59f00; --signal-ink: #120f08; --sell: #69c27e; --gems: #a98af2; --warn: #ff7b6e; --chart: #52a466;
 }
 * { box-sizing: border-box; border-radius: 0; }
 [hidden] { display: none !important; }
 html, body { margin: 0; background: var(--paper); color: var(--ink); }
 body { font: 14px/1.45 var(--body); }
 main { max-width: 1180px; margin: 0 auto; padding: 0 20px 64px; }
-.num, .fig { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.num, .fig { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .faint { color: var(--faint); }
 .small { font-size: 12px; }
 
@@ -42,7 +42,13 @@ main { max-width: 1180px; margin: 0 auto; padding: 0 20px 64px; }
 .mast .ver { font-family: var(--mono); font-size: 11px; color: var(--faint); padding-bottom: 8px; }
 .mast .small-go { margin-bottom: 4px; padding: 5px 8px; font-size: 11px; }
 .mast a { color: var(--signal); margin-bottom: 7px; font-family: var(--mono); }
-.tabs { display: flex; margin-right: auto; }
+.tabs { display: flex; margin-right: auto; max-width: 100%; overflow-x: auto; scrollbar-width: none; padding-right: 1px; }
+.tabs button { white-space: nowrap; flex: none; }
+@media (max-width: 620px) {  /* tabs wrap onto two rows, each row filled */
+  .tabs { width: 100%; flex-wrap: wrap; overflow: visible; }
+  .tabs button { flex: 1 1 auto; font-size: 14px; padding: 8px 8px 7px; border-bottom: 1px solid var(--ink); margin-bottom: -1px; }
+  .tabs button .count { margin-left: 3px; }
+}
 .tabs button { font: 800 17px/1 var(--head); font-stretch: condensed; letter-spacing: .05em; padding: 9px 13px 8px;
   border: 1px solid var(--ink); border-bottom: 0; margin-right: -1px; color: var(--faint); }
 .tabs button.on { background: var(--ink); color: var(--paper); }
@@ -137,13 +143,34 @@ td.acts a { font: 600 11px/1 var(--mono); letter-spacing: .06em; text-transform:
   text-decoration: underline; text-underline-offset: 3px; }
 td.acts a:hover { color: var(--signal); }
 .empty { padding: 18px 0; color: var(--faint); font-style: italic; border-bottom: 1px solid var(--rule); }
-@media (max-width: 620px) { .hide-sm { display: none; } }
+@media (max-width: 620px) {
+  .hide-sm { display: none; }
+  th, td { padding-right: 5px; }
+  th.r, td.r { padding-left: 6px; }
+  td.acts button { padding: 5px 5px; }
+  td.acts { white-space: normal; }  /* actions may stack instead of squeezing the name */
+  td.pic, th.pic { display: none; }
+}
+/* grid columns may shrink below their content (tables scroll inside their own box instead) */
+.sheet > *, .split > *, .figures > * { min-width: 0; }
 
 .split { display: grid; grid-template-columns: 1.15fr 1fr; gap: 32px; }
 @media (max-width: 860px) { .split { grid-template-columns: 1fr; } }
 
+/* earnings chart: one column per day, square like the rest of the ledger */
+.chart { position: relative; margin-top: 12px; }
+.chart svg { display: block; width: 100%; height: 150px; }
+.chart .bar { fill: var(--chart); }
+.chart .hit { fill: transparent; cursor: default; }
+.chart .hit:hover + .bar, .chart .bar.on { fill: var(--ink); }
+.chart .base { stroke: var(--rule); stroke-width: 1; }
+.chart .scale { position: absolute; top: 0; left: 0; font: 600 11px/1 var(--mono); color: var(--faint); }
+.chart .dates { display: flex; justify-content: space-between; font: 11px/1 var(--mono); color: var(--faint); margin-top: 6px; }
+.chart .tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--paper); font: 600 11px/1.4 var(--mono);
+  padding: 6px 8px; white-space: nowrap; transform: translate(-50%, -100%); }
+
 /* activity tape */
-.tape { font: 12px/1.5 var(--mono); max-height: 460px; overflow: auto; }
+.tape { font: 12px/1.5 var(--mono); max-height: 360px; overflow: auto; }
 .tape div { display: grid; grid-template-columns: 14px 104px 1fr; gap: 6px; padding: 5px 0; border-bottom: 1px dotted var(--rule); }
 .tape .mark { color: var(--faint); }
 .tape .sell .mark, .tape .sell .t { color: var(--sell); }
@@ -219,7 +246,7 @@ td.acts a:hover { color: var(--signal); }
       </div>
       <div class="scroll">
         <table>
-          <thead id="review-head"><tr><th></th><th>Card</th><th class="r">Asks</th><th class="r hide-sm">You get</th><th class="r hide-sm">Gems</th><th>Verdict</th><th></th></tr></thead>
+          <thead id="review-head"><tr><th class="pic"></th><th>Card</th><th class="r">Asks</th><th class="r hide-sm">You get</th><th class="r hide-sm">Gems</th><th class="pl">Verdict</th><th></th></tr></thead>
           <tbody id="review"></tbody>
         </table>
       </div>
@@ -258,24 +285,18 @@ td.acts a:hover { color: var(--signal); }
       </div>
     </section>
 
-    <div class="split">
-      <section>
+    <section>
         <div class="head"><h2><i>03</i>Games with drops</h2><div class="tools"><button id="refresh">Check now</button></div></div>
         <div class="scroll">
           <table>
-            <thead><tr><th>Game</th><th class="r">Left</th><th class="r hide-sm">Dropped</th><th class="r hide-sm" title="Time spent idling it, per card it dropped">Pace</th><th class="r">Avg card</th><th></th></tr></thead>
+            <thead><tr><th>Game</th><th class="r">Left</th><th class="r hide-sm">Dropped</th><th class="r hide-sm" title="Time spent idling it, per card it dropped">Per card</th><th class="r">Avg card</th><th></th></tr></thead>
             <tbody id="games"></tbody>
           </table>
         </div>
-      </section>
-      <section>
-        <div class="head"><h2><i>04</i>Tape</h2></div>
-        <div class="tape"></div>
-      </section>
-    </div>
+    </section>
 
     <section class="settings">
-      <div class="head"><h2><i>05</i>Finish sets <span id="sets-count" class="faint"></span></h2>
+      <div class="head"><h2><i>04</i>Finish sets <span id="sets-count" class="faint"></span></h2>
         <div class="tools"><button id="sets-check">Find sets</button></div></div>
       <div class="line"><span>Spend at most<small>cents per set, on the cards it's missing</small></span>
         <input type="number" min="0" data-key="set_budget_cents"></div>
@@ -291,6 +312,11 @@ td.acts a:hover { color: var(--signal); }
           <tbody id="sets"></tbody>
         </table>
       </div>
+    </section>
+
+    <section>
+      <div class="head"><h2><i>05</i>Tape</h2></div>
+      <div class="tape"></div>
     </section>
     </div>
 
@@ -328,26 +354,25 @@ td.acts a:hover { color: var(--signal); }
       </div>
     </section>
 
-    <div class="split">
-      <section>
+    <section>
         <div class="head">
           <h2><i>02</i>Review <span id="items-count" class="faint"></span></h2>
           <div class="tools"><button id="items-all-sell">Sell all</button></div>
         </div>
         <div class="scroll">
           <table>
-            <thead id="items-head"><tr><th></th><th>Item</th><th class="r">Asks</th><th class="r hide-sm">You get</th><th class="r hide-sm" title="Sold in the last 24 hours, and their median price">Sold, 24 h</th><th></th></tr></thead>
+            <thead id="items-head"><tr><th class="pic"></th><th>Item</th><th class="r">Asks</th><th class="r hide-sm">You get</th><th class="r hide-sm" title="Sold in the last 24 hours, and their median price">Sold, 24 h</th><th></th></tr></thead>
             <tbody id="items"></tbody>
           </table>
         </div>
         <p class="note">Each listing waits for your OK in the Steam mobile app. Items you just got may not be
           marketable for a few days; they turn up once they are.</p>
-      </section>
-      <section>
-        <div class="head"><h2><i>03</i>Tape</h2></div>
-        <div class="tape"></div>
-      </section>
-    </div>
+    </section>
+
+    <section>
+      <div class="head"><h2><i>03</i>Tape</h2></div>
+      <div class="tape"></div>
+    </section>
     </div>
 
     <div id="tab-panel-market" hidden>
@@ -369,7 +394,7 @@ td.acts a:hover { color: var(--signal); }
         Steam's limits, only listings old enough to reprice and above the lowest price they could go to are priced.</p>
       <div class="scroll">
         <table>
-          <thead id="listings-head"><tr><th></th><th>Item</th><th class="r">Yours</th><th class="r">Lowest now</th><th class="r hide-sm" title="Sold in the last 24 hours, and their median price">Sold, 24 h</th><th class="r hide-sm">Listed</th><th></th></tr></thead>
+          <thead id="listings-head"><tr><th class="pic"></th><th>Item</th><th class="r">Yours</th><th class="r">Lowest now</th><th class="r hide-sm" title="Sold in the last 24 hours, and their median price">Sold, 24 h</th><th class="r hide-sm">Listed</th><th></th></tr></thead>
           <tbody id="listings"></tbody>
         </table>
       </div>
@@ -389,14 +414,20 @@ td.acts a:hover { color: var(--signal); }
       </div>
     </section>
 
+    <section>
+      <div class="head"><h2><i>03</i>Earnings, 30 days <span id="chart-sum" class="faint"></span></h2></div>
+      <div class="chart" id="chart"><span class="scale" id="chart-scale"></span><svg id="chart-svg" role="img"></svg>
+        <div class="dates" id="chart-dates"></div><div class="tip" id="chart-tip" hidden></div></div>
+    </section>
+
     <div class="split">
       <section>
-        <div class="head"><h2><i>03</i>Sales by day</h2></div>
+        <div class="head"><h2><i>04</i>Sales by day</h2></div>
         <table><thead><tr><th>Day</th><th class="r">Sold</th><th class="r">You got</th></tr></thead><tbody id="sales-days"></tbody></table>
         <p class="note" id="sales-note"></p>
       </section>
       <section>
-        <div class="head"><h2><i>04</i>By game, 30 days</h2></div>
+        <div class="head"><h2><i>05</i>By game, 30 days</h2></div>
         <table><thead><tr><th>Game</th><th class="r">Sold</th><th class="r">You got</th></tr></thead><tbody id="sales-games"></tbody></table>
       </section>
     </div>
@@ -435,6 +466,20 @@ td.acts a:hover { color: var(--signal); }
         </table>
       </div>
     </section>
+
+    <section>
+      <div class="head"><h2><i>03</i>Booster packs you have <span id="held-count" class="faint"></span></h2>
+        <div class="tools"><button id="held-check">Check your packs</button><button id="held-do" class="go">Do suggestions</button></div></div>
+      <p class="note">Steam gives booster packs now and then, and you can make them from gems. Each one either sells as a pack
+        or opens into 3 cards of its game; opening wins when the cards are worth more, or when the game is a set you're
+        finishing or levelling up with. Opened cards go to the review list.</p>
+      <div class="scroll">
+        <table>
+          <thead id="held-head"><tr><th>Pack</th><th class="r">Sells: you get</th><th class="r">3 cards: about</th><th class="pl">Best</th><th></th></tr></thead>
+          <tbody id="held"></tbody>
+        </table>
+      </div>
+    </section>
     </div>
 
     <div id="tab-panel-levelup" hidden>
@@ -455,6 +500,9 @@ td.acts a:hover { color: var(--signal); }
       <div class="sheet">
         <div><div class="line"><span>Reach level<small>0 for the next one</small></span><input type="number" min="0" data-key="levelup_target"></div></div>
         <div><div class="line"><span>Spend at most<small>cents for the whole plan</small></span><input type="number" min="0" data-key="levelup_budget_cents"></div></div>
+        <div><div class="line"><span>How to buy<small>buy orders cost less but fill over hours or days</small></span>
+          <span class="pick" data-key="levelup_buying"><button data-v="now">Now</button><button data-v="orders">Buy orders</button></span></div></div>
+        <div><div class="line"><span>Cancel orders unfilled after<small>days; 0 never</small></span><input type="number" min="0" data-key="order_days"></div></div>
       </div>
       <div class="alert" id="levelup-short" hidden></div>
     </section>
@@ -467,9 +515,22 @@ td.acts a:hover { color: var(--signal); }
           <tbody id="levelup"></tbody>
         </table>
       </div>
-      <p class="note">"Level up" buys each set's cards (from your Steam wallet, one buy order per card; Steam may ask you to
-        approve each in the mobile app) and crafts the badge. A set that got dearer than planned is skipped before anything
-        of it is bought, and the cards of sets in the plan aren't sold meanwhile.</p>
+      <p class="note">With "Now", Level up buys each set's cards at the cheapest listings (from your Steam wallet; Steam may ask
+        you to approve each purchase in the mobile app) and crafts the badge; a set that got dearer than planned is skipped
+        before anything of it is bought. With "Buy orders", it places an order for each card about 15% under the cheapest ask
+        (never under 3¢) and crafts each set once its cards are in. Either way, the plan's cards aren't sold meanwhile.</p>
+    </section>
+
+    <section id="orders-section" hidden>
+      <div class="head"><h2><i>03</i>Waiting on buy orders <span id="orders-count" class="faint"></span></h2>
+        <div class="tools"><button id="orders-cancel">Cancel all orders</button></div></div>
+      <div class="line wide"><span>Sets waiting<small>each crafts as soon as its cards are in</small></span><span class="chips" id="patient"></span></div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Card</th><th class="r">Offer</th><th class="r">Wanted</th><th class="r hide-sm">Placed</th><th></th></tr></thead>
+          <tbody id="orders"></tbody>
+        </table>
+      </div>
     </section>
     </div>
   </div>
@@ -527,6 +588,7 @@ function renderSettings(s) {
 function renderTabs() {
   $("#tabs").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
   document.querySelectorAll("[id^=tab-panel-]").forEach(p => p.hidden = p.id !== `tab-panel-${tab}`);
+  if (tab === "market" && state) renderChart(state.sales.daily);
 }
 
 function renderReview(list) {
@@ -538,12 +600,12 @@ function renderReview(list) {
     : list.map(e => {
     const c = e.card, d = e.detail;
     return `<tr>
-      <td style="width:42px">${art(c.icon)}</td>
+      <td class="pic" style="width:42px">${art(c.icon)}</td>
       <td class="cardname"><b>${esc(c.name)}</b>${c.foil ? '<span class="foil">FOIL</span>' : ""}<span class="faint">${esc(c.game)}</span></td>
       <td class="r num">${d.buyer ? money(d.buyer) : '<span class="faint">none</span>'}</td>
       <td class="r num hide-sm">${d.buyer ? money(d.receive) : "–"}</td>
       <td class="r num hide-sm">${d.gems || 0}</td>
-      <td><span class="verdict ${e.action}">${e.action === "sell" ? "Sell" : "Gems"}</span></td>
+      <td class="pl"><span class="verdict ${e.action}">${e.action === "sell" ? "Sell" : "Gems"}</span></td>
       <td class="acts">
         <button data-id="${esc(e.id)}" data-a="sell" ${d.buyer ? "" : "disabled"}>Sell</button><button data-id="${esc(e.id)}" data-a="gems" ${d.gems ? "" : "disabled"}>Gems</button><button data-id="${esc(e.id)}" data-a="keep">Keep</button>
       </td></tr>`;
@@ -554,9 +616,9 @@ function renderGames(games, kept) {
   fill($("#games"), games.length ? games.map(g => `<tr class="${g.skipped || g.no_idle ? "dim" : ""}">
     <td>${esc(g.name)}${g.no_idle ? '<span class="tag" title="No drop in hours of idling: free-to-play games like CS2 drop cards when you play them yourself">doesn\'t drop when idled</span>' : g.skipped ? '<span class="tag">skipped</span>' : ""}${g.keep ? '<span class="tag">kept</span>' : ""}</td>
     <td class="r num">${g.drops}</td><td class="r num hide-sm">${g.earned - g.drops} / ${g.earned}</td>
-    <td class="r num hide-sm" title="idled ${hours(g.idled)}">${g.farmed ? Math.round(g.idled / 60 / g.farmed) + " min" : g.idled > 60 ? '<span class="faint">' + hours(g.idled) + "</span>" : "–"}</td>
+    <td class="r num hide-sm" title="idled ${hours(g.idled)}">${g.farmed ? hours(g.idled / g.farmed) : g.idled > 60 ? '<span class="faint">' + hours(g.idled) + "</span>" : "–"}</td>
     <td class="r num">${g.value == null ? '<span class="faint">…</span>' : money(Math.round(g.value))}</td>
-    <td class="acts"><button class="link" data-app="${g.appid}" data-skip="${g.skipped || g.no_idle ? 0 : 1}">${g.no_idle ? "Try again" : g.skipped ? "Unskip" : "Skip"}</button><button class="link" data-keep-game="${g.appid}">${g.keep ? "Sell its cards" : "Keep its cards"}</button></td>
+    <td class="acts"><button class="link" data-app="${g.appid}" data-skip="${g.skipped || g.no_idle ? 0 : 1}">${g.no_idle ? "Try again" : g.skipped ? "Unskip" : "Skip"}</button><button class="link" data-keep-game="${g.appid}">${g.keep ? "Stop keeping" : "Keep cards"}</button></td>
   </tr>`).join("") : `<tr><td colspan="6" class="empty">No games with card drops left.</td></tr>`);
   fill($("#kept-games"), kept.length ? kept.map(g => `<button class="chip" data-unkeep-game="${g.appid}" title="Stop keeping">${esc(g.name)}<span class="x">×</span></button>`).join("")
     : '<span class="none">none</span>');
@@ -584,11 +646,11 @@ function renderItems(s) {
     : list.map(e => {
     const i = e.item, d = e.detail;
     return `<tr>
-      <td style="width:60px">${art(i.icon, true)}</td>
+      <td class="pic" style="width:60px">${art(i.icon, true)}</td>
       <td class="cardname"><b>${esc(i.name)}</b>${i.amount > 1 ? `<span class="tag">×${i.amount}</span>` : ""}<span class="faint">${esc([i.kind, i.game].filter(Boolean).join(" · "))}</span></td>
       <td class="r num">${money(d.buyer)}${i.amount > 1 ? '<span class="faint small"> each</span>' : ""}</td>
       <td class="r num hide-sm">${money(d.receive)}</td>
-      <td class="r num hide-sm nowrap">${d.volume == null ? "–" : d.volume + (d.median ? " · " + money(d.median) : "")}</td>
+      <td class="r num hide-sm nowrap">${d.volume == null ? "–" : d.volume.toLocaleString() + (d.median ? " · " + money(d.median) : "")}</td>
       <td class="acts"><button data-item="${esc(e.id)}" data-a="sell">Sell</button><button data-item="${esc(e.id)}" data-a="keep">Keep</button><button class="link" data-item="${esc(e.id)}" data-a="always" title="Keep this and never offer one like it again">Always keep</button></td>
     </tr>`;
   }).join(""));
@@ -609,9 +671,9 @@ function renderMarket(s) {
   const order = {undercut: 0, young: 1, ok: 2, floor: 3};
   fill($("#listings"), !L.length ? `<tr><td colspan="7" class="empty">${s.listings.checked ? "Nothing on the market." : "Press Check listings to compare them with today's prices."}</td></tr>`
     : [...L].sort((a, b) => order[a.verdict] - order[b.verdict] || a.created - b.created).map(l => `<tr class="${l.verdict === "ok" ? "dim" : ""}">
-      <td style="width:42px">${art(l.icon)}</td>
-      <td class="cardname"><b>${esc(l.name)}</b>${l.verdict === "undercut" ? '<span class="tag">undercut</span>' : l.verdict === "young" ? '<span class="tag">new</span>' : l.verdict === "floor" ? '<span class="tag">at the minimum</span>' : ""}<span class="faint">${esc(l.game)}</span></td>
-      <td class="r num">${money(l.buyer)}</td><td class="r num">${l.lowest == null && l.verdict !== "ok" ? '<span class="faint">not checked</span>' : money(l.lowest)}</td><td class="r num hide-sm nowrap">${l.volume == null ? "–" : l.volume + (l.median ? " · " + money(l.median) : "")}</td><td class="r num hide-sm nowrap">${age(l.created)} ago</td>
+      <td class="pic" style="width:42px">${art(l.icon)}</td>
+      <td class="cardname"><b>${esc(l.name)}</b>${l.verdict === "undercut" ? '<span class="tag">undercut</span>' : l.verdict === "young" ? '<span class="tag">new</span>' : l.verdict === "floor" ? '<span class="tag">at minimum</span>' : ""}<span class="faint">${esc(l.game)}</span></td>
+      <td class="r num">${money(l.buyer)}</td><td class="r num">${l.lowest == null && l.verdict !== "ok" ? '<span class="faint" title="Not looked up: too new to reprice, or already at the lowest price it can go to">–</span>' : money(l.lowest)}</td><td class="r num hide-sm nowrap">${l.volume == null ? "–" : l.volume.toLocaleString() + (l.median ? " · " + money(l.median) : "")}</td><td class="r num hide-sm nowrap">${age(l.created)} ago</td>
       <td class="acts">${l.verdict === "undercut" ? `<button data-listing="${esc(l.listingid)}" data-a="reprice">Reprice</button>` : ""}<button class="link" data-listing="${esc(l.listingid)}" data-a="cancel">Cancel</button></td></tr>`).join(""));
   fill($("#sales-days"), s.sales.days.length ? s.sales.days.map(([d, [n, c]]) => `<tr><td class="num">${d}</td><td class="r num">${n}</td><td class="r num">${money(c)}</td></tr>`).join("")
     : '<tr><td colspan="3" class="empty">No sales yet.</td></tr>');
@@ -626,6 +688,41 @@ function boostersThatFit(b) {
   return b.options.filter(o => o.worth && !o.unavailable).sort((x, y) => y.profit - x.profit)
     .filter(o => o.gems <= left && ((left -= o.gems), true));
 }
+
+// daily earnings as columns: up to 24 px wide, 2 px apart, from one baseline; the hover target is the
+// whole column so short bars are easy to point at
+function renderChart(daily) {
+  const svg = $("#chart-svg"), w = $("#chart").clientWidth, h = 150, top = 18, n = daily.length;
+  if (!w) return;  // hidden (another tab): drawn when the Market tab shows
+  const max = Math.max(...daily.map(d => d[2]), 1), slot = w / n, bar = Math.min(24, slot - 2);
+  const total = daily.reduce((a, d) => a + d[2], 0), sold = daily.reduce((a, d) => a + d[1], 0);
+  const key = JSON.stringify(daily) + w;
+  if (svg.dataset.key === key) return;
+  svg.dataset.key = key;
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  svg.setAttribute("aria-label", `Earnings per day over the last 30 days: ${money(total)} from ${sold} sales`);
+  svg.innerHTML = daily.map((d, i) => {
+    const bh = d[2] ? Math.max(2, (h - top) * d[2] / max) : 0, x = i * slot + (slot - bar) / 2;
+    return `<rect class="hit" x="${i * slot}" y="0" width="${slot}" height="${h}" data-i="${i}"></rect>`
+      + (bh ? `<rect class="bar" x="${x.toFixed(1)}" y="${(h - bh).toFixed(1)}" width="${bar.toFixed(1)}" height="${bh.toFixed(1)}"></rect>` : "");
+  }).join("") + `<line class="base" x1="0" y1="${h - 0.5}" x2="${w}" y2="${h - 0.5}"></line>`;
+  $("#chart-scale").textContent = max > 1 ? `best day ${money(max)}` : "";
+  const day = d => new Date(d + "T12:00").toLocaleDateString([], {month: "short", day: "numeric"});
+  $("#chart-dates").innerHTML = [0, Math.floor(n / 2), n - 1].map(i => `<span>${day(daily[i][0])}</span>`).join("");
+  $("#chart-sum").textContent = `(${money(total)} from ${sold} sale${sold === 1 ? "" : "s"})`;
+}
+
+$("#chart-svg").addEventListener("mousemove", e => {
+  const hit = e.target.closest(".hit"), tip = $("#chart-tip");
+  if (!hit || !state) return tip.hidden = true;
+  const d = state.sales.daily[+hit.dataset.i], box = $("#chart").getBoundingClientRect(), r = hit.getBoundingClientRect();
+  tip.innerHTML = `${new Date(d[0] + "T12:00").toLocaleDateString([], {weekday: "short", month: "short", day: "numeric"})}<br>${d[1]} sold · ${money(d[2])}`;
+  tip.style.left = Math.min(Math.max(r.left - box.left + r.width / 2, 60), box.width - 60) + "px";
+  tip.style.top = "14px";
+  tip.hidden = false;
+});
+$("#chart-svg").addEventListener("mouseleave", () => $("#chart-tip").hidden = true);
+addEventListener("resize", () => state && renderChart(state.sales.daily));
 
 function renderGems(s) {
   const g = s.gems, b = s.boosters, worth = boostersThatFit(b), gemsLeft = b.gems ?? b.tradable ?? 0;
@@ -649,7 +746,7 @@ function renderGems(s) {
     : b.options.slice(0, 100).map(o => `<tr class="${o.worth && !o.unavailable ? "" : "dim"}">
       <td>${esc(o.name)}${o.unavailable ? `<span class="tag">${o.available_at ? "again " + esc(o.available_at) : "made today"}</span>` : ""}${o.sells === false ? '<span class="tag">doesn\'t sell</span>' : ""}</td>
       <td class="r num">${o.gems}</td><td class="r num hide-sm">${money(Math.round(o.cost))}</td>
-      <td class="r num hide-sm nowrap">${o.volume || 0}${o.median ? ` · ${money(o.median)}` : ""}</td><td class="r num">${o.buyer ? money(o.receive) : '<span class="faint">none</span>'}</td>
+      <td class="r num hide-sm nowrap">${(o.volume || 0).toLocaleString()}${o.median ? ` · ${money(o.median)}` : ""}</td><td class="r num">${o.buyer ? money(o.receive) : '<span class="faint">none</span>'}</td>
       <td class="r num nowrap">${o.profit > 0 ? "+" : ""}${money(Math.round(o.profit))}</td>
       <td class="acts">${o.worth && !o.unavailable ? (o.gems <= gemsLeft ? `<button data-booster="${o.appid}">Make &amp; list</button>`
         : `<span class="small faint">needs ${o.gems} gems</span>`) : ""}</td></tr>`).join(""));
@@ -695,6 +792,36 @@ function renderLevelup(s) {
     : p.crafts.map(c => `<tr><td class="cardname"><b>${esc(c.game)}</b><span class="faint">${esc(c.missing.slice(0, 5).join(", "))}${c.missing.length > 5 ? ` +${c.missing.length - 5}` : ""}</span></td>
       <td class="r num">+100 XP</td><td class="r num">${money(c.cost)}</td><td class="r num hide-sm">${c.forgone ? money(c.forgone) : "–"}</td>
       <td class="hide-sm pl small">${c.source === "yours" ? "your partial set" : "market"}</td></tr>`).join(""));
+}
+
+function renderHeld(s) {
+  const h = s.held, packs = h.packs || [];
+  $("#held-count").textContent = packs.length ? `(${packs.length})` : "";
+  $("#held-check").disabled = s.busy.includes("held");
+  $("#held-check").textContent = busyText(s, "held", "Check your packs", "Checking…");
+  $("#held-do").disabled = !packs.length;
+  $("#held-head").hidden = !packs.length;
+  fill($("#held"), !packs.length ? `<tr><td colspan="5" class="empty">${h.checked ? "No booster packs in your inventory." : "Press Check your packs."}</td></tr>`
+    : packs.map(p => `<tr>
+      <td class="cardname"><b>${esc(p.game || p.name)}</b>${p.helps ? '<span class="tag">for a set</span>' : ""}<span class="faint">${p.volume ? p.volume + " sold in a day" : p.marketable ? "not selling lately" : "can't be sold"}</span></td>
+      <td class="r num">${p.sell ? money(p.sell) : "–"}</td><td class="r num">${p.opened ? money(p.opened) : "–"}</td>
+      <td class="pl"><span class="verdict ${p.verdict === "open" ? "gems" : "sell"}">${p.verdict === "open" ? "Open" : "Sell"}</span></td>
+      <td class="acts"><button data-held="${esc(p.assetid)}" data-a="sell" ${p.marketable ? "" : "disabled"}>Sell</button><button data-held="${esc(p.assetid)}" data-a="open">Open</button></td></tr>`).join(""));
+}
+
+function renderOrders(s) {
+  const orders = s.orders || [], patient = s.patient || [];
+  $("#orders-section").hidden = !orders.length && !patient.length;
+  $("#orders-count").textContent = orders.length ? `(${orders.length})` : "";
+  $("#orders-cancel").disabled = !orders.length;
+  const sets = {};
+  patient.forEach(w => { sets[w.appid] = sets[w.appid] || {game: w.game, n: 0}; sets[w.appid].n++; });
+  fill($("#patient"), Object.entries(sets).map(([appid, w]) => `<button class="chip on" data-stop-wait="${appid}" title="Stop: cancel its orders, its cards follow your rules again"><b>${esc(w.game)}${w.n > 1 ? ` ×${w.n}` : ""}</b><span class="x">stop</span></button>`).join("")
+    || '<span class="none">none</span>');
+  fill($("#orders"), orders.length ? orders.map(o => `<tr><td class="cardname"><b>${esc(o.hash.split("-").slice(1).join("-"))}</b></td>
+      <td class="r num">${money(o.price)}</td><td class="r num">${o.quantity}</td><td class="r num hide-sm nowrap">${age(o.placed)} ago</td>
+      <td class="acts"><button class="link" data-order="${esc(o.orderid)}">Cancel</button></td></tr>`).join("")
+    : '<tr><td colspan="5" class="empty">No orders open: every card has come in.</td></tr>');
 }
 
 function renderTape(history) {
@@ -754,9 +881,12 @@ function render(s) {
   renderItems(s);
   renderTape(s.history);
   renderMarket(s);
+  renderChart(s.sales.daily);
   renderGems(s);
   renderSets(s);
   renderLevelup(s);
+  renderHeld(s);
+  renderOrders(s);
 }
 
 async function load() {
@@ -788,6 +918,12 @@ document.addEventListener("click", e => {
   if (d.unkeepItem) return setting("items_keep", without(s.items_keep, d.unkeepItem));
   if (d.listing) return (d.a !== "cancel" || confirm("Cancel this listing? The item comes back to your inventory."))
     && post("/api/listings", {ids: [d.listing], action: d.a});
+  if (d.order) return confirm("Cancel this buy order? Its set won't finish unless the card comes in another way.")
+    && post("/api/orders/cancel", {ids: [d.order]});
+  if (d.stopWait) return confirm("Stop waiting for this set? Its buy orders are cancelled and its cards follow your rules again.")
+    && post("/api/orders/stop", {appid: +d.stopWait});
+  if (d.held) return (d.a !== "open" || confirm("Open this booster pack? It can't be sold as a pack afterwards."))
+    && post("/api/held", {ids: [d.held], action: d.a});
   if (d.booster) return confirm("Make this booster pack from your gems and list it? Gems can't be taken back; the listing needs your OK in the Steam app.")
     && post("/api/boosters/make", {appids: [+d.booster]});
   if (d.stopSet) return confirm("Stop finishing this set? Its cards will be sold or turned into gems by your rules again.")
@@ -830,9 +966,16 @@ $("#boosters-make").onclick = () => { const n = boostersThatFit(state.boosters).
   return confirm(`Make ${n} booster pack${n > 1 ? "s" : ""} from your gems and list them? Each listing needs your OK in the Steam app.`)
     && post("/api/boosters/make", {appids: "profitable"}); };
 $("#sets-check").onclick = () => post("/api/sets/check");
+$("#held-check").onclick = () => post("/api/held/check");
+$("#orders-cancel").onclick = () => confirm(`Cancel all ${state.orders.length} buy orders?`) && post("/api/orders/cancel", {ids: "all"});
+$("#held-do").onclick = () => confirm(`Do the suggestion for all ${state.held.packs.length} booster packs? Opened packs can't be undone; listings need your OK in the Steam app.`)
+  && post("/api/held", {ids: "suggested", action: "suggested"});
 $("#levelup-check").onclick = () => post("/api/levelup/check");
 $("#levelup-go").onclick = () => { const p = state.levelup.plan;
-  return confirm(`Buy the cards for ${p.crafts.length} badge level${p.crafts.length > 1 ? "s" : ""} (about ${money(p.cost)} from your Steam wallet) and craft them, for level ${p.reaches}? Steam may ask you to approve each purchase in the mobile app.`)
+  const orders = state.settings.levelup_buying === "orders";
+  return confirm(orders
+    ? `Place buy orders for the cards of ${p.crafts.length} badge level${p.crafts.length > 1 ? "s" : ""} (up to about ${money(p.cost)} of your Steam wallet, usually less) and craft each set as its cards come in, for level ${p.reaches}? Steam may ask you to approve each order in the mobile app.`
+    : `Buy the cards for ${p.crafts.length} badge level${p.crafts.length > 1 ? "s" : ""} (about ${money(p.cost)} from your Steam wallet) and craft them, for level ${p.reaches}? Steam may ask you to approve each purchase in the mobile app.`)
     && post("/api/levelup/go"); };
 $("#items-all-sell").onclick = () => confirm(`List all ${state.items.review.length} items on the market at the prices shown?`)
   && post("/api/items/review", {ids: "all", action: "sell"});

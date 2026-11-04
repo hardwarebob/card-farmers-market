@@ -37,7 +37,7 @@ def fresh_state():
             **market.market_state()}
 
 
-class Farm(market.MarketParts):
+class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
     def __init__(self, data_dir):
         self.data = data_dir
         os.makedirs(data_dir, exist_ok=True)
@@ -62,7 +62,7 @@ class Farm(market.MarketParts):
         self.signin_error = None
         self.busy = set()  # long jobs running for the page: "cards", "items", "listings", ...
         self.progress = {}  # job -> what it's doing, for the page
-        self._next_sales = self._next_listings = 0
+        self._next_sales = self._next_listings = self._next_orders = 0
         self.notify = _notify
         self.on_quit = None  # set by the window: closes Card Farm (after an update is handed over)
         self.update, self._next_update = None, 0
@@ -199,6 +199,12 @@ class Farm(market.MarketParts):
                 self._sync_sales()
             except Exception as e:
                 print(f"Sales check failed: {e}", flush=True)
+        if time.time() >= self._next_orders:
+            self._next_orders = time.time() + 30 * 60
+            try:
+                self._check_orders()
+            except Exception as e:
+                print(f"Buy order check failed: {e}", flush=True)
         if s["cancel_after_days"] and time.time() >= self._next_listings:
             self._next_listings = time.time() + market.LISTINGS_EVERY
             self.check_listings()
@@ -385,6 +391,10 @@ class Farm(market.MarketParts):
                 owed = [t for t in _owed_list(self.state["owed"].get(key)) if now - t < OWED_FOR]
                 self.state["owed"][key] = owed
                 waiting_since = self.state["unexplained"].setdefault(card["assetid"], now)
+                opened = self.state.get("opened", {}).get(key, 0)
+                if opened and not owed:  # from a pack you opened: no need to wait for the badges page
+                    self.state["opened"][key] = opened - 1
+                    waiting_since = now - EXPLAIN_WAIT
             if not owed and now - waiting_since < EXPLAIN_WAIT:
                 # not on the badges page yet, or not a drop: look again in a few minutes
                 self._soon = True
@@ -634,6 +644,10 @@ class Farm(market.MarketParts):
             return self._do_booster(e)
         if e["kind"] == "set":
             return self._do_set(e)
+        if e["kind"] == "pack":
+            return self._do_open(e)
+        if e["kind"] == "orders":
+            return self._do_orders(e)
         if e["kind"] == "item":
             it = e["item"]
             buyer = rules.asking_price(rules.realistic(self.prices.item_stats(it["appid"], it["hash"])), self.settings)
@@ -703,6 +717,8 @@ class Farm(market.MarketParts):
                 "listings": st["listings"], "sales": self.sales_summary(), "gems": st["gems"],
                 "boosters": dict(st["boosters"], options=[o for o in st["boosters"]["options"] if o.get("profit") is not None][:150]),
                 "sets": dict(st["sets"], finishing=[dict(v, appid=int(k)) for k, v in st["finishing"].items()]),
+                "held": st.get("held", {"packs": [], "checked": 0}),
+                "orders": st.get("orders", []), "patient": st.get("patient", []),
                 "levelup": dict({k: v for k, v in st["levelup"].items() if k != "options"},
                                 options=len(st["levelup"]["options"]), plan=self.levelup_plan()),
             }
@@ -750,8 +766,8 @@ def _owed_list(value):
     return list(value) if isinstance(value, list) else [time.time()] * int(value or 0)
 
 
-VERBS = {"gems": "turn into gems", "set": "finish", "booster": "make", "pack": "pack", "sell": "sell",
-         "reprice": "reprice", "cancel": "cancel"}
+VERBS = {"gems": "turn into gems", "set": "finish", "booster": "make", "pack": "pack", "sell": "sell", "open": "open",
+         "reprice": "reprice", "cancel": "cancel", "orders": "place"}
 
 
 def _label(e):
@@ -759,7 +775,8 @@ def _label(e):
     kind = e["kind"]
     return {"card": lambda: e["card"]["name"], "item": lambda: e["item"]["name"], "listing": lambda: e["listing"]["name"],
             "gems": lambda: "your gems", "booster": lambda: f"the booster pack for {e['booster']['name']}",
-            "set": lambda: f"the {e['offer']['game']} set"}[kind]()
+            "set": lambda: f"the {e['offer']['game']} set", "pack": lambda: f"the {e['pack']['game']} booster pack",
+            "orders": lambda: "the buy orders"}[kind]()
 
 
 def _page_version():

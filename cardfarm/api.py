@@ -73,6 +73,18 @@ def route(farm, path, body):
         return farm.stop_finishing(int(body["appid"]))
     if path == "/api/sets/finish":
         return farm.finish_set(int(body["appid"]))
+    if path == "/api/held/check":
+        return farm.check_held()
+    if path == "/api/held":  # {"ids": [...] | "suggested", "action": sell|open|suggested}
+        if body.get("action") not in ("sell", "open", "suggested"):
+            raise ValueError("unknown action")
+        ids = body.get("ids")
+        return farm.decide_held(ids if ids == "suggested" else set(map(str, ids or [])), body["action"])
+    if path == "/api/orders/cancel":  # {"ids": [...] | "all"}
+        ids = body.get("ids")
+        return farm.cancel_orders(ids if ids == "all" else set(map(str, ids or [])))
+    if path == "/api/orders/stop":
+        return farm.stop_waiting(int(body["appid"]))
     if path == "/api/levelup/check":
         return farm.check_levelup()
     if path == "/api/levelup/go":
