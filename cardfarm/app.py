@@ -18,7 +18,8 @@ from gi.repository import Adw, Gio, GLib, Gtk, WebKit  # noqa: E402
 
 from . import api  # noqa: E402
 
-APP_ID = "io.github.cardfarm.CardFarm"
+APP_ID = "io.github.cardfarm.CardFarm"  # kept from the Card Farm days: the menu entry, icon and settings use it
+NAME = "Card Farmer's Market"
 HOME = "cardfarm://app/"
 
 
@@ -32,6 +33,7 @@ class CardFarmApp(Adw.Application):
 
     def do_startup(self):
         Adw.Application.do_startup(self)
+        GLib.set_application_name(NAME)
         _install_icon()
         Gtk.Window.set_default_icon_name(APP_ID)
         self.farm = self.make_farm()
@@ -54,7 +56,7 @@ class CardFarmApp(Adw.Application):
         if self.window:
             self.window.present()
             return
-        self.window = Adw.ApplicationWindow(application=self, title="Card Farmer's Market", default_width=1100, default_height=820)
+        self.window = Adw.ApplicationWindow(application=self, title=NAME, default_width=1100, default_height=820)
         self.window.connect("close-request", self._on_close)
 
         menu = Gio.Menu()

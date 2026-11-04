@@ -13,7 +13,7 @@ import tempfile
 
 from .http import download, get_json
 
-REPO = "maybeimdreaming/card-farm"
+REPO = "maybeimdreaming/card-farmers-market"
 ASSETS = {"windows": "Card-Farm-Windows.zip", "macos": "Card-Farm-macOS.zip", "pyz": "card-farm.pyz"}
 
 try:

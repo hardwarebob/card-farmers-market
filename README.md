@@ -19,7 +19,7 @@ tells you when some are waiting. Prices are looked up again just before each lis
 
 ## Download
 
-Get the latest version from the [Releases page](https://github.com/maybeimdreaming/card-farm/releases):
+Get the latest version from the [Releases page](https://github.com/maybeimdreaming/card-farmers-market/releases):
 
 - **Windows 10/11:** `Card-Farm-Windows.zip`. Unzip it and run `Card Farm.exe`. Windows may say the publisher is unknown: **More info → Run anyway**. Closing the window while farming minimises it; use **Quit** at the top of the page to stop.
 - **macOS (Apple silicon):** `Card-Farm-macOS.zip`. Move `Card Farm` to Applications; the first time, right-click it and choose **Open** (it isn't notarised).
@@ -35,7 +35,7 @@ Steam must be running and signed in, and you need the Steam mobile app with Stea
 ### Install on Linux with pipx
 
 ```sh
-pipx install git+https://github.com/maybeimdreaming/card-farm
+pipx install git+https://github.com/maybeimdreaming/card-farmers-market
 card-farm
 ```
 
@@ -43,7 +43,7 @@ card-farm
 
 ```sh
 curl -o ~/.local/share/applications/io.github.cardfarm.CardFarm.desktop \
-  https://raw.githubusercontent.com/maybeimdreaming/card-farm/main/extras/io.github.cardfarm.CardFarm.desktop
+  https://raw.githubusercontent.com/maybeimdreaming/card-farmers-market/main/extras/io.github.cardfarm.CardFarm.desktop
 ```
 
 Closing the window while farming keeps Card Farmer's Market running in the background; open it again from the
@@ -53,7 +53,7 @@ To start farming when you log in, without opening the window (`card-farm --backg
 
 ```sh
 curl -o ~/.config/autostart/card-farm.desktop \
-  https://raw.githubusercontent.com/maybeimdreaming/card-farm/main/extras/card-farm-autostart.desktop
+  https://raw.githubusercontent.com/maybeimdreaming/card-farmers-market/main/extras/card-farm-autostart.desktop
 ```
 
 Opening Card Farmer's Market from the menu then shows that running copy. (On Windows and macOS, `--background`

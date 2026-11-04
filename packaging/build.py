@@ -67,9 +67,33 @@ def linux():
     return DIST / "card-farm.pyz"
 
 
-def pyinstaller(icon):
+NAME = "Card Farmer's Market"  # what people see; the files keep "Card Farm" so older copies can update
+
+
+def version():
+    import tomllib
+    return tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+
+
+def windows_details():
+    """The Windows program details (taskbar, Task Manager, file properties) with the shown name."""
+    numbers = tuple(int(n) for n in version().split(".")) + (0,)
+    path = ROOT / "build" / "version-info.txt"
+    path.parent.mkdir(exist_ok=True)
+    fields = {"CompanyName": "m4ybe", "FileDescription": NAME, "FileVersion": version(), "InternalName": "Card Farm",
+              "OriginalFilename": "Card Farm.exe", "ProductName": NAME, "ProductVersion": version(),
+              "LegalCopyright": "MIT License"}
+    strings = ", ".join(f"StringStruct({k!r}, {v!r})" for k, v in fields.items())
+    path.write_text(f"""VSVersionInfo(
+  ffi=FixedFileInfo(filevers={numbers}, prodvers={numbers}, mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
+  kids=[StringFileInfo([StringTable('040904B0', [{strings}])]), VarFileInfo([VarStruct('Translation', [1033, 1200])])])
+""")
+    return path
+
+
+def pyinstaller(icon, extra=()):
     sep = ";" if sys.platform == "win32" else ":"
-    subprocess.run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed", "--name", "Card Farm",
+    subprocess.run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed", "--name", "Card Farm", *extra,
                     "--icon", str(icon), "--add-data", f"{ROOT / 'cardfarm' / 'ui'}{sep}cardfarm/ui",
                     "--add-data", f"{ROOT / 'LICENSE'}{sep}.", "--osx-bundle-identifier", "io.github.cardfarm.CardFarm",
                     "--distpath", str(DIST), "--workpath", str(ROOT / "build"), "--specpath", str(ROOT / "build"),
@@ -77,7 +101,7 @@ def pyinstaller(icon):
 
 
 def windows():
-    pyinstaller(ROOT / "packaging" / "icon.png")
+    pyinstaller(ROOT / "packaging" / "icon.png", ["--version-file", str(windows_details())])
     folder = DIST / "Card Farm"
     (folder / "THIRD-PARTY-NOTICES.txt").write_text(notices(), encoding="utf-8")
     shutil.copy(ROOT / "LICENSE", folder / "LICENSE.txt")
@@ -85,8 +109,14 @@ def windows():
 
 
 def macos():
+    import plistlib
     pyinstaller(ROOT / "packaging" / "icon.png")
     app = DIST / "Card Farm.app"
+    info = app / "Contents" / "Info.plist"  # the shown name (menu bar, About) and version
+    plist = plistlib.loads(info.read_bytes())
+    plist.update(CFBundleName=NAME, CFBundleDisplayName=NAME, CFBundleShortVersionString=version(), CFBundleVersion=version())
+    info.write_bytes(plistlib.dumps(plist))
+    subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(app)], check=True)  # sign again after the edit
     (app / "Contents" / "Resources" / "THIRD-PARTY-NOTICES.txt").write_text(notices())
     out = DIST / "Card-Farm-macOS.zip"
     subprocess.run(["ditto", "-c", "-k", "--keepParent", str(app), str(out)], check=True)  # keeps the app's links and signature
