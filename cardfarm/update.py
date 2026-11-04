@@ -6,6 +6,7 @@ replace its own files on Windows, and a .pyz can't be swapped while it's being r
 import hashlib
 import json
 import os
+import platform
 import re
 import subprocess
 import sys
@@ -14,7 +15,12 @@ import tempfile
 from .http import download, get_json
 
 REPO = "maybeimdreaming/card-farmers-market"
-ASSETS = {"windows": "Card-Farm-Windows.zip", "macos": "Card-Farm-macOS.zip", "pyz": "card-farm.pyz"}
+# each system's download, the Card Farmer's Market name first; the Card Farm names it had before are
+# still found, so a release can switch to the new names once copies understand both
+ASSETS = {"windows": ["Card-Farmers-Market-Windows.zip", "Card-Farm-Windows.zip"],
+          "macos": ["Card-Farmers-Market-macOS.zip", "Card-Farm-macOS.zip"],
+          "macos-intel": ["Card-Farmers-Market-macOS-Intel.zip", "Card-Farm-macOS-Intel.zip"],
+          "pyz": ["card-farmers-market.pyz", "card-farm.pyz"]}
 
 try:
     from ._version import VERSION  # written by the release build, e.g. "v0.2.0-beta.7"
@@ -29,6 +35,13 @@ def version_key(tag):
         return None
     major, minor, patch, beta = m.groups()
     return int(major), int(minor), int(patch), 0 if beta else 1, int(beta or 0)
+
+
+def asset_names(kind, machine=None):
+    """This computer's download, by its names (Macs with an Intel processor have their own)."""
+    if kind == "macos" and (machine or platform.machine()) == "x86_64":
+        return ASSETS["macos-intel"]
+    return ASSETS[kind]
 
 
 def install_kind():
@@ -60,7 +73,8 @@ def newest(releases, current=VERSION, kind=None):
     if not best:
         return None
     r = best[1]
-    asset = next((a for a in r.get("assets", []) if kind and a["name"] == ASSETS[kind]), None)
+    by_name = {a["name"]: a for a in r.get("assets", [])}
+    asset = next((by_name[n] for n in (asset_names(kind) if kind else []) if n in by_name), None)
     return {"version": r["tag_name"], "page": r["html_url"], "url": asset and asset["browser_download_url"],
             "sha256": asset and (asset.get("digest") or "").removeprefix("sha256:")}
 
@@ -97,12 +111,18 @@ Wait-Process -Id $Wait -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ("card-farm-new-" + [guid]::NewGuid())
 Expand-Archive -LiteralPath $Zip -DestinationPath $tmp -Force
+# the download holds one folder: "Card Farmer's Market" now, "Card Farm" before
+$from = Get-ChildItem -LiteralPath $tmp -Directory | Select-Object -First 1
 # /IS /IT: copy every file, even ones robocopy would call unchanged (same size, and zip times are
 # rounded to 2 seconds)
-robocopy (Join-Path $tmp "Card Farm") $Target /E /IS /IT /R:5 /W:1 /NFL /NDL /NJH /NJS /NP
+robocopy $from.FullName $Target /E /IS /IT /R:5 /W:1 /NFL /NDL /NJH /NJS /NP
 Write-Output "robocopy exit $LASTEXITCODE"
+$exe = Get-ChildItem -LiteralPath $from.FullName -Filter *.exe | Select-Object -First 1
+foreach ($old in Get-ChildItem -LiteralPath $Target -Filter *.exe) {  # a renamed program leaves its old .exe
+  if ($old.Name -ne $exe.Name -and $old.Name -like "Card Farm*.exe") { Remove-Item -LiteralPath $old.FullName -Force }
+}
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
-if ($Start -ne "none") { Start-Process -FilePath $Start }
+if ($Start -ne "none") { Start-Process -FilePath (Join-Path $Target $exe.Name) }
 Stop-Transcript | Out-Null
 """
 
@@ -110,9 +130,14 @@ POSIX_HELPER = r"""
 while kill -0 "$1" 2>/dev/null; do sleep 1; done
 case "$2" in
   macos)
-    tmp=$(mktemp -d) && ditto -x -k "$3" "$tmp" && [ -d "$tmp/Card Farm.app" ] || exit 1
-    rm -rf "$4.old" && mv "$4" "$4.old" && mv "$tmp/Card Farm.app" "$4" && rm -rf "$4.old" "$tmp"
-    [ -n "$5" ] && open "$4" ;;
+    # the download holds one app ("Card Farmer's Market.app" now, "Card Farm.app" before); it goes where
+    # the old one was, under its own name
+    tmp=$(mktemp -d) && ditto -x -k "$3" "$tmp" || exit 1
+    new=$(find "$tmp" -maxdepth 1 -name "*.app" | head -n 1)
+    [ -n "$new" ] || exit 1
+    dest="$(dirname "$4")/$(basename "$new")"
+    rm -rf "$4.old" && mv "$4" "$4.old" && mv "$new" "$dest" && rm -rf "$4.old" "$tmp"
+    [ -n "$5" ] && open "$dest" ;;
   pyz)
     chmod +x "$3" && mv -f "$3" "$4"
     [ -n "$5" ] && nohup "$4" >/dev/null 2>&1 & ;;
@@ -131,10 +156,9 @@ def install(path, relaunch=True, wait_for=None, target=None):
         script = os.path.join(os.path.dirname(path), "update.ps1")
         with open(script, "w", encoding="utf-8") as f:
             f.write(WINDOWS_HELPER)
-        start = os.path.join(target, "Card Farm.exe") if relaunch else ""
         log = open(os.path.join(os.path.dirname(path), "update-start.log"), "wb")  # PowerShell's own complaints
         return subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
-                                 "-File", script, "-Wait", pid, "-Zip", path, "-Target", target, "-Start", start or "none"],
+                                 "-File", script, "-Wait", pid, "-Zip", path, "-Target", target, "-Start", "yes" if relaunch else "none"],
                                 stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                                 creationflags=0x00000200 | 0x08000000)  # own process group, no window
     if kind == "macos":

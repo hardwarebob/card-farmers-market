@@ -2,7 +2,7 @@
 
   python packaging/build.py linux     card-farm.pyz (runs with the system's Python and GTK)
   python packaging/build.py windows   Card-Farm-Windows.zip ("Card Farm" folder with Card Farm.exe)
-  python packaging/build.py macos     Card-Farm-macOS.zip (Card Farm.app)
+  python packaging/build.py macos     Card-Farm-macOS.zip (Card Farm.app; -Intel on an Intel Mac)
 
 Windows and macOS need `pip install pyinstaller pywebview pillow` first. Every download carries
 THIRD-PARTY-NOTICES.txt: the licences of Python and of each library bundled into it (the .pyz
@@ -10,6 +10,7 @@ bundles nothing; it uses what the system has)."""
 import importlib.metadata as md
 import os
 import pathlib
+import platform
 import shutil
 import subprocess
 import sys
@@ -116,9 +117,11 @@ def macos():
     plist = plistlib.loads(info.read_bytes())
     plist.update(CFBundleName=NAME, CFBundleDisplayName=NAME, CFBundleShortVersionString=version(), CFBundleVersion=version())
     info.write_bytes(plistlib.dumps(plist))
-    subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(app)], check=True)  # sign again after the edit
     (app / "Contents" / "Resources" / "THIRD-PARTY-NOTICES.txt").write_text(notices())
-    out = DIST / "Card-Farm-macOS.zip"
+    # sign again after every change to the bundle (a change after signing breaks it on Apple silicon)
+    subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(app)], check=True)
+    subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
+    out = DIST / ("Card-Farm-macOS-Intel.zip" if platform.machine() == "x86_64" else "Card-Farm-macOS.zip")
     subprocess.run(["ditto", "-c", "-k", "--keepParent", str(app), str(out)], check=True)  # keeps the app's links and signature
     return out
 
