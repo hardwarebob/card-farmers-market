@@ -415,14 +415,18 @@ td.acts a:hover { color: var(--signal); }
       <p class="note">A Sack of Gems holds 1,000 gems and sells on the market; sacks can be unpacked again in Steam.</p>
     </section>
 
-    <section>
+    <section class="settings">
       <div class="head"><h2><i>02</i>Booster packs</h2>
         <div class="tools"><button id="boosters-check">Check booster prices</button><button id="boosters-make" class="go">Make &amp; list all worth it</button></div></div>
       <p class="note" id="boosters-note">Each game's booster pack costs gems; it's worth making when the pack sells for more than those
-        gems would as sacks. Pricing every game you can make one for takes a while the first time; results stay for a day.</p>
+        gems would as sacks. A pack is valued at the lower of its cheapest listing and what it really sold for in the last day,
+        and only counts if it sells at all (an old, high asking price doesn't make it worth it). Pricing every game you can
+        make one for takes a while the first time; results stay for a day.</p>
+      <div class="line"><span>Only packs that sold at least<small>times in the last 24 hours</small></span>
+        <input type="number" min="0" data-key="booster_min_sales"></div>
       <div class="scroll">
         <table>
-          <thead id="boosters-head"><tr><th>Game</th><th class="r">Gems</th><th class="r hide-sm">Gems are worth</th><th class="r">Pack: you get</th><th class="r">Gain</th><th></th></tr></thead>
+          <thead id="boosters-head"><tr><th>Game</th><th class="r">Gems</th><th class="r hide-sm">Gems are worth</th><th class="r hide-sm" title="Packs sold in the last 24 hours, and their median price">Sold, 24 h</th><th class="r">Pack: you get</th><th class="r">Gain</th><th></th></tr></thead>
           <tbody id="boosters"></tbody>
         </table>
       </div>
@@ -576,7 +580,7 @@ function renderMarket(s) {
 }
 
 function renderGems(s) {
-  const g = s.gems, b = s.boosters, worth = b.options.filter(o => o.profit > 0 && !o.unavailable);
+  const g = s.gems, b = s.boosters, worth = b.options.filter(o => o.worth && !o.unavailable);
   $("#tab-gems").textContent = worth.length || "";
   $("#g-gems").textContent = g.checked ? g.gems.toLocaleString() : "–";
   $("#g-sacks").textContent = g.checked ? g.sacks : "–";
@@ -591,12 +595,13 @@ function renderGems(s) {
   $("#boosters-make").disabled = !worth.length;
   $("#boosters-make").textContent = worth.length ? `Make & list all worth it (${worth.length})` : "Make & list all worth it";
   $("#boosters-head").hidden = !b.options.length;
-  fill($("#boosters"), !b.options.length ? `<tr><td colspan="6" class="empty">${b.checked ? "No prices yet." : "Press Check booster prices."}</td></tr>`
-    : b.options.slice(0, 100).map(o => `<tr class="${o.profit > 0 && !o.unavailable ? "" : "dim"}">
-      <td>${esc(o.name)}${o.unavailable ? `<span class="tag">${o.available_at ? "again " + esc(o.available_at) : "made today"}</span>` : ""}</td>
-      <td class="r num">${o.gems}</td><td class="r num hide-sm">${money(Math.round(o.cost))}</td><td class="r num">${o.buyer ? money(o.receive) : '<span class="faint">none</span>'}</td>
+  fill($("#boosters"), !b.options.length ? `<tr><td colspan="7" class="empty">${b.checked ? "No prices yet." : "Press Check booster prices."}</td></tr>`
+    : b.options.slice(0, 100).map(o => `<tr class="${o.worth && !o.unavailable ? "" : "dim"}">
+      <td>${esc(o.name)}${o.unavailable ? `<span class="tag">${o.available_at ? "again " + esc(o.available_at) : "made today"}</span>` : ""}${o.sells === false ? '<span class="tag">doesn\'t sell</span>' : ""}</td>
+      <td class="r num">${o.gems}</td><td class="r num hide-sm">${money(Math.round(o.cost))}</td>
+      <td class="r num hide-sm nowrap">${o.volume || 0}${o.median ? ` · ${money(o.median)}` : ""}</td><td class="r num">${o.buyer ? money(o.receive) : '<span class="faint">none</span>'}</td>
       <td class="r num nowrap">${o.profit > 0 ? "+" : ""}${money(Math.round(o.profit))}</td>
-      <td class="acts">${o.profit > 0 && !o.unavailable ? `<button data-booster="${o.appid}">Make &amp; list</button>` : ""}</td></tr>`).join(""));
+      <td class="acts">${o.worth && !o.unavailable ? `<button data-booster="${o.appid}">Make &amp; list</button>` : ""}</td></tr>`).join(""));
 }
 
 function renderSets(s) {
@@ -749,7 +754,7 @@ $("#gems-check").onclick = () => post("/api/gems/check");
 $("#gems-pack").onclick = () => confirm(`Pack ${Math.floor(state.gems.gems / 1000) * 1000} gems into sacks?`) && post("/api/gems/pack");
 $("#gems-sell").onclick = () => confirm(`List your ${state.gems.sacks} sack${state.gems.sacks > 1 ? "s" : ""} of gems at today's price?`) && post("/api/gems/sell");
 $("#boosters-check").onclick = () => post("/api/boosters/check");
-$("#boosters-make").onclick = () => { const n = state.boosters.options.filter(o => o.profit > 0 && !o.unavailable).length;
+$("#boosters-make").onclick = () => { const n = state.boosters.options.filter(o => o.worth && !o.unavailable).length;
   return confirm(`Make ${n} booster pack${n > 1 ? "s" : ""} from your gems and list them? Each listing needs your OK in the Steam app.`)
     && post("/api/boosters/make", {appids: "profitable"}); };
 $("#sets-check").onclick = () => post("/api/sets/check");

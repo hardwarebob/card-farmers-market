@@ -26,6 +26,7 @@ DEFAULTS = {
     "reprice_gap_cents": 2,      # ...and only when someone sells for more than this below yours
     "cancel_after_days": 0,      # cancel listings unsold this long (0: never); they come back for review
     "notify_sales": True,        # desktop notification when things sell
+    "booster_min_sales": 2,      # a booster pack is only worth making if at least this many sold in the last day
     "set_budget_cents": 50,      # most to spend buying the missing cards of one set
 }
 MODES = ("auto", "review", "off")
@@ -51,7 +52,7 @@ def clean(patch):
         elif k == "games_at_once":
             out[k] = max(1, min(32, int(v)))
         elif k in ("stall_minutes", "min_sell_cents", "items_min_cents", "reprice_after_hours", "reprice_gap_cents",
-                   "cancel_after_days", "set_budget_cents"):
+                   "cancel_after_days", "set_budget_cents", "booster_min_sales"):
             out[k] = max(0, int(v))
         elif k in ("sell", "gems", "items_new") and v in MODES:
             out[k] = v

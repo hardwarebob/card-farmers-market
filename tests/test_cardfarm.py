@@ -462,10 +462,22 @@ def test_repricing_cancels_and_relists_at_todays_price(world, monkeypatch):
 def test_boosters_worth_making(world):
     f = world["make"]()
     f.prices.gem_sack = lambda: 69
-    o = f._booster_offer({"appid": 10, "name": "Game", "series": 1, "gems": 600, "unavailable": False, "lowest": 60})
-    assert o["receive"] == rules.received(60) and o["cost"] == round(600 * 69 / 1000 / 1.15, 1) and o["profit"] > 0
-    assert f._booster_offer({"appid": 11, "name": "Cheap", "series": 1, "gems": 1200, "unavailable": False,
-                             "lowest": 20})["profit"] < 0
+    o = f._booster_offer({"appid": 10, "name": "Game", "series": 1, "gems": 600, "unavailable": False, "lowest": 60,
+                          "median": 62, "volume": 9})
+    assert o["receive"] == rules.received(60) and o["cost"] == round(600 * 69 / 1000 / 1.15, 1) and o["worth"]
+    cheap = f._booster_offer({"appid": 11, "name": "Cheap", "series": 1, "gems": 1200, "unavailable": False,
+                              "lowest": 20, "median": 20, "volume": 9})
+    assert cheap["profit"] < 0 and not cheap["worth"]
+
+
+def test_a_stale_high_ask_doesnt_make_a_booster_worth_it(world):
+    f = world["make"]()
+    f.prices.gem_sack = lambda: 69
+    base = {"appid": 10, "name": "Game", "series": 1, "gems": 600, "unavailable": False}
+    nobody_buys = f._booster_offer(dict(base, lowest=120, median=None, volume=0))     # only an old listing up
+    assert not nobody_buys["sells"] and not nobody_buys["worth"]
+    sold_cheaper = f._booster_offer(dict(base, lowest=120, median=30, volume=5))      # sales went for 30c
+    assert sold_cheaper["receive"] == rules.received(30) and not sold_cheaper["worth"]
 
 
 def test_sets_you_hold_part_of_are_offered(world, monkeypatch):

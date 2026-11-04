@@ -204,13 +204,19 @@ class Prices:
 
     def item(self, appid, hash_name):
         """Lowest asking price in cents for any market item, or None when nobody sells it."""
-        key = f"item:{appid}:{hash_name}"
+        return self.item_stats(appid, hash_name)["lowest"]
+
+    def item_stats(self, appid, hash_name):
+        """{"lowest": asking price, "median": median sale price over the last 24 h, "volume": sales in
+        the last 24 h} in cents, from one lookup (Steam leaves out the sale figures when none sold)."""
+        key = f"stats:{appid}:{hash_name}"
         with self.lock:
             if self._fresh(key):
                 return self.cache[key]["v"]
             q = urllib.parse.urlencode({"appid": appid, "currency": 1, "market_hash_name": hash_name})
             d = self._ask(f"{COMMUNITY}/market/priceoverview/?{q}")
-            return self._remember(key, _cents(d.get("lowest_price")))
+            return self._remember(key, {"lowest": _cents(d.get("lowest_price")), "median": _cents(d.get("median_price")),
+                                        "volume": int(str(d.get("volume") or "0").replace(",", ""))})
 
     def gems(self, appid, item_type=None, foil=False):
         """Gems for one card. Without the inventory's exact item type, the cheapest item of the

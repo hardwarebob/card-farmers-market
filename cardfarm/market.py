@@ -238,16 +238,17 @@ class MarketParts:
                 b.update(tradable=tradable, of=len(options), done=0, checked=now)
             for i, o in enumerate(options):
                 self.progress["boosters"] = f"Booster prices: {i + 1} of {len(options)}"
-                if o["appid"] not in known:
+                if o["appid"] not in known or "volume" not in known[o["appid"]]:
                     try:
-                        lowest = self.prices.item(753, f"{o['appid']}-{o['name']} Booster Pack")
+                        stats = self.prices.item_stats(753, f"{o['appid']}-{o['name']} Booster Pack")
                     except Exception:
                         continue
-                    known[o["appid"]] = dict(o, lowest=lowest, priced=time.time())
+                    known[o["appid"]] = dict(o, **stats, priced=time.time())
                 else:
                     known[o["appid"]].update(unavailable=o["unavailable"], available_at=o["available_at"], gems=o["gems"])
                 with self.lock:
-                    b["options"] = sorted((self._booster_offer(x) for x in known.values()), key=lambda x: -x["profit"])
+                    b["options"] = sorted((self._booster_offer(x) for x in known.values()),
+                                          key=lambda x: (not x["worth"], -(x["profit"] if x["profit"] is not None else -999)))
                     b["done"] = i + 1
         except Exception as e:
             self.log(f"Couldn't check booster prices: {e}", "warn")
@@ -255,15 +256,22 @@ class MarketParts:
             self.progress.pop("boosters", None)
 
     def _booster_offer(self, o):
-        buyer = rules.asking_price(o.get("lowest"), self.settings)
+        """Valued on what the pack really sells for: the lower of its cheapest listing and its median
+        sale over the last day (a stale, inflated ask doesn't count), and only if it sells at all."""
+        lowest, median, volume = o.get("lowest"), o.get("median"), o.get("volume", 0)
+        price = min(p for p in (lowest, median) if p) if (lowest or median) else None
+        buyer = rules.asking_price(price, self.settings)
         receive = rules.received(buyer) if buyer else 0
         cost = round(self._gem_value(o["gems"]), 1)
-        return dict(o, buyer=buyer, receive=receive, cost=cost, profit=round(receive - cost, 1) if buyer else -999)
+        sells = volume >= self.settings["booster_min_sales"]
+        profit = round(receive - cost, 1) if buyer else None
+        return dict(o, buyer=buyer, receive=receive, cost=cost, sells=sells, profit=profit,
+                    worth=bool(buyer and sells and profit > 0))
 
     def make_boosters(self, appids):
         with self.lock:
             options = self.state["boosters"]["options"]
-            picked = [o for o in options if (appids == "profitable" and o["profit"] > 0 and not o["unavailable"])
+            picked = [o for o in options if (appids == "profitable" and o.get("worth") and not o["unavailable"])
                       or o["appid"] in (appids if appids != "profitable" else ())]
         for o in picked:
             o["unavailable"] = True
@@ -284,7 +292,9 @@ class MarketParts:
                 break
         else:
             raise RuntimeError("the new booster pack didn't show up in the inventory yet; sell it from the Items tab")
-        buyer = max(rules.asking_price(self.prices.item(753, hash_name), self.settings) or 0, self.settings["items_min_cents"])
+        stats = self.prices.item_stats(753, hash_name)
+        price = min(p for p in (stats["lowest"], stats["median"]) if p) if (stats["lowest"] or stats["median"]) else None
+        buyer = max(rules.asking_price(price, self.settings) or 0, self.settings["items_min_cents"])
         receive = rules.received(buyer)
         steam.sell(self.session, new[0]["assetid"], receive, 753, 6)
         self.log(f"Listed the booster pack for {o['name']} at ${rules.buyer_pays(receive) / 100:.2f} (you get ${receive / 100:.2f})", "sell")

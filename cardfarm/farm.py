@@ -686,7 +686,7 @@ class Farm(market.MarketParts):
                 "ui": _page_version(), "version": update.VERSION,
                 "update": self.update and dict(self.update, installable=bool(self.update.get("url"))),
                 "listings": st["listings"], "sales": self.sales_summary(), "gems": st["gems"],
-                "boosters": dict(st["boosters"], options=[o for o in st["boosters"]["options"] if o["profit"] > -999][:150]),
+                "boosters": dict(st["boosters"], options=[o for o in st["boosters"]["options"] if o.get("profit") is not None][:150]),
                 "sets": dict(st["sets"], finishing=[dict(v, appid=int(k)) for k, v in st["finishing"].items()]),
             }
 
