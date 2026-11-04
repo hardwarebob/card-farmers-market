@@ -73,6 +73,10 @@ def route(farm, path, body):
         return farm.stop_finishing(int(body["appid"]))
     if path == "/api/sets/finish":
         return farm.finish_set(int(body["appid"]))
+    if path == "/api/levelup/check":
+        return farm.check_levelup()
+    if path == "/api/levelup/go":
+        return farm.level_up()
     if path == "/api/update":
         return farm.install_update()
     if path == "/api/refresh":

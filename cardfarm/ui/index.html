@@ -167,7 +167,7 @@ td.acts a:hover { color: var(--signal); }
 <main>
   <div class="mast">
     <div class="tabs" id="tabs" hidden>
-      <button data-tab="cards">Cards<span class="count" id="tab-cards"></span></button><button data-tab="items">Items<span class="count" id="tab-items"></span></button><button data-tab="market">Market<span class="count" id="tab-market"></span></button><button data-tab="gems">Gems<span class="count" id="tab-gems"></span></button>
+      <button data-tab="cards">Cards<span class="count" id="tab-cards"></span></button><button data-tab="items">Items<span class="count" id="tab-items"></span></button><button data-tab="market">Market<span class="count" id="tab-market"></span></button><button data-tab="gems">Gems<span class="count" id="tab-gems"></span></button><button data-tab="levelup">Level up</button>
     </div>
     <span class="who" id="who"></span>
     <span class="ver" id="ver"></span>
@@ -320,6 +320,8 @@ td.acts a:hover { color: var(--signal); }
         <div>
           <div class="line"><span>Don't list under<small>cents, what a buyer pays</small></span>
             <input type="number" min="0" data-key="items_min_cents"></div>
+          <div class="line"><span>Only items that sold at least<small>times in the last 24 hours; 0 any. Prices go by what sold, not only by asks</small></span>
+            <input type="number" min="0" data-key="items_min_sales"></div>
         </div>
         <div class="line wide"><span>Never list<small>"Always keep" adds to this</small></span>
           <span class="chips" id="kept-items"></span></div>
@@ -334,7 +336,7 @@ td.acts a:hover { color: var(--signal); }
         </div>
         <div class="scroll">
           <table>
-            <thead id="items-head"><tr><th></th><th>Item</th><th class="r">Asks</th><th class="r hide-sm">You get</th><th></th></tr></thead>
+            <thead id="items-head"><tr><th></th><th>Item</th><th class="r">Asks</th><th class="r hide-sm">You get</th><th class="r hide-sm" title="Sold in the last 24 hours, and their median price">Sold, 24 h</th><th></th></tr></thead>
             <tbody id="items"></tbody>
           </table>
         </div>
@@ -362,11 +364,12 @@ td.acts a:hover { color: var(--signal); }
       <div class="head"><h2><i>01</i>Your listings</h2>
         <div class="tools"><button id="listings-check">Check listings</button><button id="listings-reprice" class="go">Reprice undercut</button></div></div>
       <p class="note" id="listings-note">Steam can't change a price, so repricing cancels the listing and lists the item again,
-        which needs your OK in the Steam mobile app once more. To stay under Steam's limits, only listings old enough to
-        reprice and above the lowest price they could go to are priced.</p>
+        which needs your OK in the Steam mobile app once more. A listing counts as undercut when what really sells (the
+        lower of the cheapest listing and the day's median sale) is below yours, and it's relisted at that. To stay under
+        Steam's limits, only listings old enough to reprice and above the lowest price they could go to are priced.</p>
       <div class="scroll">
         <table>
-          <thead id="listings-head"><tr><th></th><th>Item</th><th class="r">Yours</th><th class="r">Lowest now</th><th class="r hide-sm">Listed</th><th></th></tr></thead>
+          <thead id="listings-head"><tr><th></th><th>Item</th><th class="r">Yours</th><th class="r">Lowest now</th><th class="r hide-sm" title="Sold in the last 24 hours, and their median price">Sold, 24 h</th><th class="r hide-sm">Listed</th><th></th></tr></thead>
           <tbody id="listings"></tbody>
         </table>
       </div>
@@ -432,6 +435,42 @@ td.acts a:hover { color: var(--signal); }
       </div>
     </section>
     </div>
+
+    <div id="tab-panel-levelup" hidden>
+    <section>
+      <div class="figures">
+        <div><b id="l-level">–</b><span>Steam level</span></div>
+        <div><b id="l-next">–</b><span>XP to the next</span></div>
+        <div><b id="l-maxed">–</b><span>Badges at level 5</span></div>
+        <div><b id="l-cost">–</b><span>Plan costs</span></div>
+      </div>
+      <p class="note">Each game badge level is 100 XP and needs a full set of its cards (up to level 5). This finds the cheapest
+        crafts: sets you hold part of (counting what your cards would sell for), and the market's cheapest full sets.</p>
+    </section>
+
+    <section class="settings">
+      <div class="head"><h2><i>01</i>Goal</h2>
+        <div class="tools"><button id="levelup-check">Find the cheapest way</button><button id="levelup-go" class="go">Level up</button></div></div>
+      <div class="sheet">
+        <div><div class="line"><span>Reach level<small>0 for the next one</small></span><input type="number" min="0" data-key="levelup_target"></div></div>
+        <div><div class="line"><span>Spend at most<small>cents for the whole plan</small></span><input type="number" min="0" data-key="levelup_budget_cents"></div></div>
+      </div>
+      <div class="alert" id="levelup-short" hidden></div>
+    </section>
+
+    <section>
+      <div class="head"><h2><i>02</i>Plan <span id="levelup-sum" class="faint"></span></h2></div>
+      <div class="scroll">
+        <table>
+          <thead id="levelup-head"><tr><th>Game</th><th class="r">Craft</th><th class="r">Cards cost</th><th class="r hide-sm" title="What your own cards of the set would sell for instead">Yours sell for</th><th class="hide-sm pl">From</th></tr></thead>
+          <tbody id="levelup"></tbody>
+        </table>
+      </div>
+      <p class="note">"Level up" buys each set's cards (from your Steam wallet, one buy order per card; Steam may ask you to
+        approve each in the mobile app) and crafts the badge. A set that got dearer than planned is skipped before anything
+        of it is bought, and the cards of sets in the plan aren't sold meanwhile.</p>
+    </section>
+    </div>
   </div>
 </main>
 
@@ -448,7 +487,7 @@ const age = t => { const d = (Date.now() / 1000 - t) / 86400; return d < 1 ? hou
 const busyText = (s, job, idle, working) => s.busy.includes(job) ? (s.progress[job] || working) : idle;
 let state = null, qrShown = null, uiVersion = null;
 let tab = "cards";
-try { const t = localStorage.getItem("tab"); tab = ["items", "market", "gems"].includes(t) ? t : "cards"; } catch {}
+try { const t = localStorage.getItem("tab"); tab = ["items", "market", "gems", "levelup"].includes(t) ? t : "cards"; } catch {}
 
 // Windows and macOS open the page as a file and reach the farm through pywebview's bridge;
 // the Linux window serves it from cardfarm:// and answers fetch()
@@ -540,7 +579,7 @@ function renderItems(s) {
   fill($("#kept-items"), s.settings.items_keep.length ? s.settings.items_keep.map(n => `<button class="chip" data-unkeep-item="${esc(n)}" title="Allow listing again">${esc(n)}<span class="x">×</span></button>`).join("")
     : '<span class="none">none</span>');
   $("#items-head").hidden = !list.length;
-  fill($("#items"), !list.length ? `<tr><td colspan="5" class="empty">${on.length ? "Nothing waiting. Check items to look again." : "Switch on an inventory above, then Check items."}</td></tr>`
+  fill($("#items"), !list.length ? `<tr><td colspan="6" class="empty">${on.length ? "Nothing waiting. Check items to look again." : "Switch on an inventory above, then Check items."}</td></tr>`
     : list.map(e => {
     const i = e.item, d = e.detail;
     return `<tr>
@@ -548,6 +587,7 @@ function renderItems(s) {
       <td class="cardname"><b>${esc(i.name)}</b>${i.amount > 1 ? `<span class="tag">×${i.amount}</span>` : ""}<span class="faint">${esc([i.kind, i.game].filter(Boolean).join(" · "))}</span></td>
       <td class="r num">${money(d.buyer)}${i.amount > 1 ? '<span class="faint small"> each</span>' : ""}</td>
       <td class="r num hide-sm">${money(d.receive)}</td>
+      <td class="r num hide-sm nowrap">${d.volume == null ? "–" : d.volume + (d.median ? " · " + money(d.median) : "")}</td>
       <td class="acts"><button data-item="${esc(e.id)}" data-a="sell">Sell</button><button data-item="${esc(e.id)}" data-a="keep">Keep</button><button class="link" data-item="${esc(e.id)}" data-a="always" title="Keep this and never offer one like it again">Always keep</button></td>
     </tr>`;
   }).join(""));
@@ -566,11 +606,11 @@ function renderMarket(s) {
   $("#listings-reprice").textContent = under.length ? `Reprice undercut (${under.length})` : "Reprice undercut";
   $("#listings-head").hidden = !L.length;
   const order = {undercut: 0, young: 1, ok: 2, floor: 3};
-  fill($("#listings"), !L.length ? `<tr><td colspan="6" class="empty">${s.listings.checked ? "Nothing on the market." : "Press Check listings to compare them with today's prices."}</td></tr>`
+  fill($("#listings"), !L.length ? `<tr><td colspan="7" class="empty">${s.listings.checked ? "Nothing on the market." : "Press Check listings to compare them with today's prices."}</td></tr>`
     : [...L].sort((a, b) => order[a.verdict] - order[b.verdict] || a.created - b.created).map(l => `<tr class="${l.verdict === "ok" ? "dim" : ""}">
       <td style="width:42px">${art(l.icon)}</td>
       <td class="cardname"><b>${esc(l.name)}</b>${l.verdict === "undercut" ? '<span class="tag">undercut</span>' : l.verdict === "young" ? '<span class="tag">new</span>' : l.verdict === "floor" ? '<span class="tag">at the minimum</span>' : ""}<span class="faint">${esc(l.game)}</span></td>
-      <td class="r num">${money(l.buyer)}</td><td class="r num">${l.lowest == null && l.verdict !== "ok" ? '<span class="faint">not checked</span>' : money(l.lowest)}</td><td class="r num hide-sm nowrap">${age(l.created)} ago</td>
+      <td class="r num">${money(l.buyer)}</td><td class="r num">${l.lowest == null && l.verdict !== "ok" ? '<span class="faint">not checked</span>' : money(l.lowest)}</td><td class="r num hide-sm nowrap">${l.volume == null ? "–" : l.volume + (l.median ? " · " + money(l.median) : "")}</td><td class="r num hide-sm nowrap">${age(l.created)} ago</td>
       <td class="acts">${l.verdict === "undercut" ? `<button data-listing="${esc(l.listingid)}" data-a="reprice">Reprice</button>` : ""}<button class="link" data-listing="${esc(l.listingid)}" data-a="cancel">Cancel</button></td></tr>`).join(""));
   fill($("#sales-days"), s.sales.days.length ? s.sales.days.map(([d, [n, c]]) => `<tr><td class="num">${d}</td><td class="r num">${n}</td><td class="r num">${money(c)}</td></tr>`).join("")
     : '<tr><td colspan="3" class="empty">No sales yet.</td></tr>');
@@ -624,6 +664,26 @@ function renderSets(s) {
       <td class="r num">${x.unpriced ? '<span class="faint">some unsold</span>' : money(x.cost)}</td><td class="r num hide-sm">${money(x.worth)}</td>
       <td class="acts">${!x.missing.length ? `<button data-set="${x.appid}">Craft</button>` : cheap(x) ? `<button data-set="${x.appid}">Buy &amp; craft</button>`
         : `<a class="small" target="_blank" rel="noopener" href="https://steamcommunity.com/my/gamecards/${x.appid}/">Open on Steam</a>`}</td></tr>`).join(""));
+}
+
+function renderLevelup(s) {
+  const lu = s.levelup, p = lu.plan;
+  $("#l-level").textContent = lu.checked ? lu.level : "–";
+  $("#l-next").textContent = lu.checked ? lu.xp_to_next : "–";
+  $("#l-maxed").textContent = lu.checked ? lu.maxed : "–";
+  $("#l-cost").textContent = p.crafts.length ? money(p.cost) : "–";
+  $("#levelup-check").disabled = s.busy.includes("levelup");
+  $("#levelup-check").textContent = busyText(s, "levelup", "Find the cheapest way", "Looking…");
+  $("#levelup-go").disabled = !p.crafts.length;
+  $("#levelup-go").textContent = p.crafts.length ? `Level up (${p.crafts.length} craft${p.crafts.length > 1 ? "s" : ""})` : "Level up";
+  $("#levelup-sum").textContent = p.crafts.length ? `(${p.xp} XP for ${money(p.cost)}: level ${p.reaches})` : "";
+  $("#levelup-short").hidden = !(lu.checked && p.short);
+  $("#levelup-short").textContent = p.short ? `${p.short} XP short of level ${p.target}: raise the budget, or find more options.` : "";
+  $("#levelup-head").hidden = !p.crafts.length;
+  fill($("#levelup"), !p.crafts.length ? `<tr><td colspan="5" class="empty">${lu.checked ? (lu.options ? "Nothing fits the budget." : "Nothing found. Try again later.") : "Press Find the cheapest way."}</td></tr>`
+    : p.crafts.map(c => `<tr><td class="cardname"><b>${esc(c.game)}</b><span class="faint">${esc(c.missing.slice(0, 5).join(", "))}${c.missing.length > 5 ? ` +${c.missing.length - 5}` : ""}</span></td>
+      <td class="r num">+100 XP</td><td class="r num">${money(c.cost)}</td><td class="r num hide-sm">${c.forgone ? money(c.forgone) : "–"}</td>
+      <td class="hide-sm pl small">${c.source === "yours" ? "your partial set" : "market"}</td></tr>`).join(""));
 }
 
 function renderTape(history) {
@@ -685,6 +745,7 @@ function render(s) {
   renderMarket(s);
   renderGems(s);
   renderSets(s);
+  renderLevelup(s);
 }
 
 async function load() {
@@ -758,6 +819,10 @@ $("#boosters-make").onclick = () => { const n = state.boosters.options.filter(o 
   return confirm(`Make ${n} booster pack${n > 1 ? "s" : ""} from your gems and list them? Each listing needs your OK in the Steam app.`)
     && post("/api/boosters/make", {appids: "profitable"}); };
 $("#sets-check").onclick = () => post("/api/sets/check");
+$("#levelup-check").onclick = () => post("/api/levelup/check");
+$("#levelup-go").onclick = () => { const p = state.levelup.plan;
+  return confirm(`Buy the cards for ${p.crafts.length} badge level${p.crafts.length > 1 ? "s" : ""} (about ${money(p.cost)} from your Steam wallet) and craft them, for level ${p.reaches}? Steam may ask you to approve each purchase in the mobile app.`)
+    && post("/api/levelup/go"); };
 $("#items-all-sell").onclick = () => confirm(`List all ${state.items.review.length} items on the market at the prices shown?`)
   && post("/api/items/review", {ids: "all", action: "sell"});
 load();

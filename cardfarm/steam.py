@@ -1,5 +1,6 @@
 """What Card Farm asks of Steam: badges (drops left), inventories, market prices, gem values, and
 the two actions (list on the market, turn into gems)."""
+import calendar
 import html
 import json
 import os
@@ -157,6 +158,8 @@ class Prices:
         self.path = path
         self.lock = threading.RLock()
         self._last = 0.0
+        self._resume, self._backoff = 0.0, 0  # market pause after a 429: until when, and how long it was
+        self.session = None  # the farm's sign-in, set by the farm
         try:
             self.cache = json.load(open(path))
         except (OSError, ValueError):
@@ -169,10 +172,24 @@ class Prices:
         os.replace(tmp, self.path)
 
     def _ask(self, url):
-        """One market request, at least GAP seconds after the previous one (callers hold the lock)."""
+        """One market request, at least GAP seconds after the previous one (callers hold the lock).
+        After Steam says "too many requests", every market request is turned away here for a while
+        (5 minutes, then 10, up to 30) instead of each one asking again."""
+        if time.time() < self._resume:
+            raise HttpError(429, "", url)
         time.sleep(max(0.0, self._last + self.GAP - time.time()))
+        signed = self.session and self.session.signed_in  # signed in, Steam lets the market be asked far more
         try:
-            return _patient(lambda: get_json(url))
+            d = _patient(lambda: get_json(url, cookies=self.session.cookies()) if signed else get_json(url), tries=1)
+            self._backoff = 0
+            return d
+        except HttpError as e:
+            if e.status == 429:
+                self._backoff = min(self._backoff * 2 or 5, 30)
+                self._resume = time.time() + self._backoff * 60
+                if on_wait:
+                    on_wait(self._backoff)
+            raise
         finally:
             self._last = time.time()
 
@@ -206,17 +223,24 @@ class Prices:
         """Lowest asking price in cents for any market item, or None when nobody sells it."""
         return self.item_stats(appid, hash_name)["lowest"]
 
-    def item_stats(self, appid, hash_name):
-        """{"lowest": asking price, "median": median sale price over the last 24 h, "volume": sales in
-        the last 24 h} in cents, from one lookup (Steam leaves out the sale figures when none sold)."""
-        key = f"stats:{appid}:{hash_name}"
+    def item_stats(self, appid, hash_name, lowest=True):
+        """{"lowest": cheapest asking price, "median": median sale price over the last 24 h, "volume":
+        sales in the last 24 h} in cents. The sales come from the signed-in price history, the asking
+        price from a search for the exact name (Steam's one-item price lookup is the first thing it
+        turns away). lowest=False skips the search (its "lowest" is then None)."""
+        key = f"stats:{appid}:{hash_name}:{int(lowest)}"
         with self.lock:
             if self._fresh(key):
                 return self.cache[key]["v"]
             q = urllib.parse.urlencode({"appid": appid, "currency": 1, "market_hash_name": hash_name})
-            d = self._ask(f"{COMMUNITY}/market/priceoverview/?{q}")
-            return self._remember(key, {"lowest": _cents(d.get("lowest_price")), "median": _cents(d.get("median_price")),
-                                        "volume": int(str(d.get("volume") or "0").replace(",", ""))})
+            stats = recent_sales(self._ask(f"{COMMUNITY}/market/pricehistory/?{q}").get("prices") or [])
+            stats["lowest"] = None
+            if lowest:
+                q = urllib.parse.urlencode({"appid": appid, "norender": 1, "start": 0, "count": 10, "query": hash_name,
+                                            "search_descriptions": 0})
+                found = self._ask(f"{COMMUNITY}/market/search/render/?{q}").get("results") or []
+                stats["lowest"] = next((r["sell_price"] for r in found if r.get("hash_name") == hash_name), None)
+            return self._remember(key, stats)
 
     def gems(self, appid, item_type=None, foil=False):
         """Gems for one card. Without the inventory's exact item type, the cheapest item of the
@@ -239,9 +263,27 @@ class Prices:
         with self.lock:
             if self._fresh("sack"):
                 return self.cache["sack"]["v"]
-            d = self._ask(f"{COMMUNITY}/market/priceoverview/?appid=753&currency=1"
-                          "&market_hash_name=753-Sack%20of%20Gems")
-            return self._remember("sack", _cents(d["lowest_price"]))
+            stats = self.item_stats(753, "753-Sack of Gems")
+            return self._remember("sack", stats["lowest"] or stats["median"])
+
+
+def recent_sales(points, hours=24, now=None):
+    """{"median", "volume"} of the last day from Steam's price history points
+    [["Nov 04 2026 12: +0", 0.68, "277"], ...] (hourly lately; times in UTC)."""
+    now = now or time.time()
+    recent = []
+    for when, price, count in points:
+        stamp = calendar.timegm(time.strptime(when.split(":")[0], "%b %d %Y %H"))
+        if now - stamp <= hours * 3600:
+            recent.append((round(float(price) * 100), int(str(count).replace(",", ""))))
+    volume = sum(n for _, n in recent)
+    median, seen = None, 0
+    for price, n in sorted(recent):  # the price at the middle sale
+        seen += n
+        if seen * 2 >= volume:
+            median = price
+            break
+    return {"median": median if volume else None, "volume": volume}
 
 
 def _cents(text):
@@ -249,14 +291,14 @@ def _cents(text):
     return round(float(text.strip("$ ").replace(",", "")) * 100) if text else None
 
 
-on_wait = None  # called (no arguments) before each minute spent waiting out a 429, to tell the page
+on_wait = None  # called with the minutes about to be spent waiting out a 429, to tell the page
 
 
 def _patient(call, tries=6):
-    """Wait out "too many requests" (a minute at a time) and Steam's passing server errors (a few
-    seconds, three tries)."""
-    hiccups = 0
-    for i in range(tries):
+    """Wait out "too many requests" (a minute at a time, `tries` in all) and Steam's passing server
+    errors (a few seconds, three tries)."""
+    hiccups = waits = 0
+    while True:
         try:
             return call()
         except HttpError as e:
@@ -264,10 +306,11 @@ def _patient(call, tries=6):
                 hiccups += 1
                 time.sleep(5)
                 continue
-            if e.status != 429 or i == tries - 1:
+            if e.status != 429 or waits >= tries - 1:
                 raise
+            waits += 1
             if on_wait:
-                on_wait()
+                on_wait(1)
             time.sleep(60)
 
 
@@ -547,3 +590,34 @@ def craft_badge(session, appid, series=1):
     if not r.get("success"):
         raise RuntimeError(r.get("message") or "Steam didn't craft the badge")
     return r
+
+
+# --- your Steam level ---------------------------------------------------------------------------
+def player_badges(session):
+    """{"level", "xp_to_next", "badges": {appid: level of its normal (not foil) game badge}}"""
+    session.cookies()  # renews the access token when it's due
+    q = urllib.parse.urlencode({"access_token": session.access_token, "steamid": session.steamid})
+    r = get_json(f"https://api.steampowered.com/IPlayerService/GetBadges/v1/?{q}").get("response", {})
+    badges = {int(b["appid"]): int(b.get("level", 0)) for b in r.get("badges", [])
+              if b.get("appid") and not b.get("border_color")}
+    return {"level": int(r.get("player_level", 0)), "xp": int(r.get("player_xp", 0)),
+            "xp_to_next": int(r.get("player_xp_needed_to_level_up", 0)), "badges": badges}
+
+
+def cheapest_cards(prices, pages):
+    """The market's cheapest trading cards (normal, not foil), cheapest first: [(appid, hash, cents, game)]."""
+    out = []
+    for page in range(pages):
+        q = urllib.parse.urlencode({"appid": 753, "norender": 1, "start": page * 10, "count": 10, "sort_column": "price",
+                                    "sort_dir": "asc", "category_753_item_class[]": "tag_item_class_2",
+                                    "category_753_cardborder[]": "tag_cardborder_0"})
+        with prices.lock:
+            d = prices._ask(f"{COMMUNITY}/market/search/render/?{q}")
+        for it in d.get("results") or []:
+            m = re.match(r"(\d+)-", it["hash_name"])
+            if m and "(Foil" not in it["hash_name"]:
+                game = (it.get("asset_description") or {}).get("type", "").removesuffix(" Trading Card")
+                out.append((int(m[1]), it["hash_name"], it["sell_price"], game))
+        if not d.get("results"):
+            break
+    return out

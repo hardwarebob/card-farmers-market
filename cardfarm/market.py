@@ -18,7 +18,8 @@ def market_state():
             "boosters": {"options": [], "checked": 0, "done": 0, "of": 0},
             "sets": {"offers": [], "checked": 0},
             "idled": {}, "farmed": {},
-            "finishing": {}}  # appid -> {"game", "since"}: sets being finished; their cards are kept
+            "finishing": {},  # appid -> {"game", "since"}: sets being finished; their cards are kept
+            "levelup": {"options": [], "checked": 0}}
 
 
 class MarketParts:
@@ -82,15 +83,9 @@ class MarketParts:
     def check_listings(self):
         self._in_background("listings", self._check_listings)
 
-    def _lowest(self, appid, hash_name):
-        """Today's lowest asking price for something listed: card prices come a whole game at a
-        time, anything else one item at a time."""
-        game = hash_name.split("-", 1)[0]
-        if appid == 753 and game.isdigit():
-            cards = self.prices.game_cards(int(game))
-            if hash_name in cards:
-                return cards[hash_name]
-        return self.prices.item(appid, hash_name)
+    def _stats(self, appid, hash_name):
+        """{"lowest", "median", "volume"} for something listed (cached a few hours)."""
+        return self.prices.item_stats(appid, hash_name)
 
     def _check_listings(self):
         try:
@@ -109,10 +104,10 @@ class MarketParts:
             for i, l in enumerate(check):
                 self.progress["listings"] = f"Pricing listings that could be repriced: {i + 1} of {len(check)}"
                 try:
-                    lowest = self._lowest(l["appid"], l["hash"])
+                    stats = self._stats(l["appid"], l["hash"])
                 except Exception:
-                    lowest = None
-                out.append(dict(l, lowest=lowest, verdict=self._verdict(l, lowest, now)))
+                    stats = {"lowest": None, "median": None, "volume": 0}
+                out.append(dict(l, **stats, verdict=self._verdict(l, rules.realistic(stats), now)))
             with self.lock:
                 self.state["listings"] = {"items": out, "checked": now}
             beaten = sum(1 for l in out if l["verdict"] == "undercut")
@@ -133,10 +128,11 @@ class MarketParts:
         is_card = l["appid"] == 753 and l["game"].endswith("Trading Card")
         return max(3, self.settings["min_sell_cents" if is_card else "items_min_cents"])
 
-    def _verdict(self, l, lowest, now):
-        """undercut: someone sells it for more than the allowed gap below yours, and yours has
-        waited long enough; young: undercut but recent; ok: yours is the price to beat."""
-        if not lowest or lowest >= l["buyer"] - self.settings["reprice_gap_cents"]:
+    def _verdict(self, l, going, now):
+        """going: what it really sells for (lower of the cheapest listing and the day's median sale).
+        undercut: that's more than the allowed gap below yours, and yours has waited long enough;
+        young: the same but recent; ok: yours is in line with what sells."""
+        if not going or going >= l["buyer"] - self.settings["reprice_gap_cents"]:
             return "ok"
         return "undercut" if now - l["created"] >= self.settings["reprice_after_hours"] * 3600 else "young"
 
@@ -178,8 +174,8 @@ class MarketParts:
                 if card:
                     self.handle(card, "existing")  # back under your rules, in the review list
             return 0
-        is_card = l["appid"] == 753 and l["game"].endswith("Trading Card")
-        buyer = max(rules.asking_price(self._lowest(l["appid"], l["hash"]), self.settings) or l["buyer"], self._floor(l))
+        going = rules.realistic(self._stats(l["appid"], l["hash"]))
+        buyer = max(rules.asking_price(going, self.settings) or l["buyer"], self._floor(l))
         receive = rules.received(buyer)
         steam.sell(self.session, assetid, receive, l["appid"], l["context"])
         self.log(f"Relisted {l['name']} for ${rules.buyer_pays(receive) / 100:.2f} (was ${l['buyer'] / 100:.2f})", "sell")
@@ -240,7 +236,13 @@ class MarketParts:
                 self.progress["boosters"] = f"Booster prices: {i + 1} of {len(options)}"
                 if o["appid"] not in known or "volume" not in known[o["appid"]]:
                     try:
-                        stats = self.prices.item_stats(753, f"{o['appid']}-{o['name']} Booster Pack")
+                        stats = self.prices.item_stats(753, f"{o['appid']}-{o['name']} Booster Pack", lowest=False)
+                    except steam.HttpError as e:
+                        if e.status == 429:  # keep what's priced; the rest next time
+                            self.log(f"Booster prices paused at {i} of {len(options)}: Steam asked to slow down; "
+                                     "check again later to go on", "warn")
+                            break
+                        continue
                     except Exception:
                         continue
                     known[o["appid"]] = dict(o, **stats, priced=time.time())
@@ -410,7 +412,7 @@ class MarketParts:
             if not price:
                 raise RuntimeError(f"nobody else is selling {hash_name.split('-', 1)[1]} right now; nothing bought")
             plan.append((hash_name, price))
-        total, budget = sum(p for _, p in plan), self.settings["set_budget_cents"]
+        total, budget = sum(p for _, p in plan), o.get("limit") or self.settings["set_budget_cents"]
         if total > budget:
             raise RuntimeError(f"the {o['game']} cards cost ${total / 100:.2f} now, over your limit; nothing bought")
         for n, (hash_name, price) in enumerate(plan):
@@ -431,6 +433,129 @@ class MarketParts:
                     raise
                 time.sleep(5)  # bought cards take a moment to reach the inventory
         with self.lock:
-            self.state["finishing"].pop(str(o["appid"]), None)
+            more = any(j["entry"].get("kind") == "set" and j["entry"]["offer"]["appid"] == o["appid"] and j["entry"] is not e
+                       for j in self.state["queue"])
+            if not more:
+                self.state["finishing"].pop(str(o["appid"]), None)
         self.log(f"Crafted the {o['game']} badge" + (f" (bought cards for ${spent / 100:.2f})" if spent else ""), "gems")
         return 0
+
+    # --- level up ----------------------------------------------------------------------------------
+    def check_levelup(self):
+        self._in_background("levelup", self._check_levelup)
+
+    def _check_levelup(self):
+        """Every way to earn badge XP Card Farmer's Market can price: sets you hold part of, and the
+        market's cheapest full sets (from its cheapest cards), each up to its badge's top level."""
+        try:
+            self.progress["levelup"] = "Reading your level and badges…"
+            me = steam.player_badges(self.session)
+            self._check_sets()  # sets you hold part of (logs it if Steam turned it away)
+            options, skipped = [], []
+            for o in self.state["sets"]["offers"]:
+                if me["badges"].get(o["appid"], 0) < 5 and not o.get("unpriced"):
+                    options.append({"appid": o["appid"], "game": o["game"], "levels": 1, "cost": o["cost"],
+                                    "forgone": o["worth"], "source": "yours", "missing_hashes": o["missing_hashes"],
+                                    "missing": o["missing"]})
+            yours = {o["appid"] for o in options}
+            self.progress["levelup"] = "Looking for the market's cheapest sets…"
+            games, self._names = [], {}
+            try:
+                cheap = steam.cheapest_cards(self.prices, LEVELUP_PAGES)
+            except steam.HttpError as e:
+                if e.status != 429:
+                    raise
+                cheap = []
+                skipped.append("the market's cheapest sets")
+            for appid, _, _, game in cheap:
+                self._names.setdefault(appid, game)
+                if appid not in games and appid not in yours and me["badges"].get(appid, 0) < 5:
+                    games.append(appid)
+            for i, appid in enumerate(games[:LEVELUP_GAMES]):
+                self.progress["levelup"] = f"Pricing cheap sets: {i + 1} of {min(len(games), LEVELUP_GAMES)}"
+                try:
+                    prices = self.prices.game_cards(appid)
+                except steam.HttpError as e:
+                    if e.status != 429:
+                        raise
+                    skipped.append(f"{min(len(games), LEVELUP_GAMES) - i} of the cheap sets")
+                    break
+                full = {h: p for h, p in prices.items() if "(Foil" not in h}
+                if len(full) < 5 or any(not p for p in full.values()):  # every set has 5 to 15 cards
+                    continue
+                options.append({"appid": appid, "game": self._game_name(appid), "levels": 5 - me["badges"].get(appid, 0),
+                                "cost": sum(full.values()), "forgone": 0, "source": "market",
+                                "missing_hashes": sorted(full), "missing": sorted(h.split("-", 1)[1] for h in full)})
+            options.sort(key=lambda o: o["cost"] + o["forgone"])
+            with self.lock:
+                self.state["levelup"] = {"level": me["level"], "xp": me["xp"], "xp_to_next": me["xp_to_next"],
+                                         "maxed": sum(1 for v in me["badges"].values() if v >= 5),
+                                         "options": options, "checked": time.time()}
+            self.log(f"Level up: {len(options)} ways to earn badge XP found"
+                     + (f"; Steam asked to slow down, so {' and '.join(skipped)} weren't priced: check again later" if skipped else ""))
+        except Exception as e:
+            self.log(f"Couldn't work out how to level up: {e}", "warn")
+        finally:
+            self.progress.pop("levelup", None)
+
+    def _game_name(self, appid):
+        return next((g["name"] for g in self.state["games"] if g["appid"] == appid), None) or self._names.get(appid) or f"App {appid}"
+
+    def levelup_plan(self):
+        """The cheapest crafts that reach the target level within the budget (each craft is a badge
+        level: 100 XP)."""
+        lu, s = self.state["levelup"], self.settings
+        if not lu.get("checked"):
+            return {"crafts": [], "xp": 0, "cost": 0, "reaches": None, "short": 0}
+        target = s["levelup_target"] or lu["level"] + 1
+        need = xp_between(lu["level"], lu["xp_to_next"], target)
+        crafts = [dict(o, n=n) for o in lu["options"] for n in range(o["levels"])]
+        crafts.sort(key=lambda c: c["cost"] + c["forgone"])
+        plan, xp, cost = [], 0, 0
+        for c in crafts:
+            if xp >= need or cost + c["cost"] > s["levelup_budget_cents"]:
+                break
+            plan.append(c)
+            xp += 100
+            cost += c["cost"]
+        return {"crafts": plan, "xp": xp, "cost": cost, "need": need, "target": target,
+                "reaches": level_after(lu["level"], lu["xp_to_next"], xp), "short": max(0, need - xp)}
+
+    def level_up(self):
+        """Queue the plan: each craft buys its set's cards and crafts the badge."""
+        plan = self.levelup_plan()
+        if not plan["crafts"]:
+            raise ValueError("nothing to do: find the options first, or raise the budget")
+        with self.lock:
+            for c in plan["crafts"]:
+                self.state["finishing"][str(c["appid"])] = {"game": c["game"], "since": time.time()}
+                offer = {"appid": c["appid"], "game": c["game"], "missing_hashes": c["missing_hashes"],
+                         "missing": c["missing"], "limit": round(c["cost"] * 1.25) + 2}
+                self._enqueue("set", {"id": f"set-{c['appid']}-{c['n']}", "kind": "set", "offer": offer})
+            self.state["levelup"]["options"] = []  # spent; check again afterwards
+        self.log(f"Levelling up: {len(plan['crafts'])} badge levels queued, about ${plan['cost'] / 100:.2f}")
+        self.save()
+
+
+LEVELUP_PAGES = 15   # the market's 150 cheapest cards
+LEVELUP_GAMES = 25   # sets priced from them, at most
+
+
+def xp_for_level(level):
+    """XP from `level` to the next: 100 for levels 0-9, 200 for 10-19, and so on."""
+    return 100 * (1 + level // 10)
+
+
+def xp_between(level, xp_to_next, target):
+    """XP still needed to reach `target` from `level` with `xp_to_next` to go."""
+    if target <= level:
+        return 0
+    return xp_to_next + sum(xp_for_level(l) for l in range(level + 1, target))
+
+
+def level_after(level, xp_to_next, gained):
+    while gained >= xp_to_next:
+        gained -= xp_to_next
+        level += 1
+        xp_to_next = xp_for_level(level)
+    return level

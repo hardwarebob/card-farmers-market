@@ -42,6 +42,7 @@ class Farm(market.MarketParts):
         self.session = Session(os.path.join(data_dir, "session.json"))
         self.settings = rules.load_settings(self._path("settings.json"))
         self.prices = steam.Prices(self._path("prices.json"))
+        self.prices.session = self.session
         self.idler = Idler(data_dir)
         self.state = fresh_state()
         if os.path.exists(self._path("state.json")):
@@ -72,9 +73,9 @@ class Farm(market.MarketParts):
         self._jobs = threading.Event()
         steam.on_wait = self._slowed_down
 
-    def _slowed_down(self):
-        self._starting("Steam asked to slow down; waiting a minute…")
-        self.log("Steam said too many requests; waiting a minute", "warn")
+    def _slowed_down(self, minutes=1):
+        self._starting(f"Steam asked to slow down; waiting {minutes} min…")
+        self.log(f"Steam said too many requests; market lookups wait {minutes} min", "warn")
 
     def _path(self, name):
         return os.path.join(self.data, name)
@@ -540,7 +541,7 @@ class Farm(market.MarketParts):
                     if item["assetid"] in skip or not (manual or new):
                         continue
                     try:
-                        action, detail = rules.decide_item(item, self.prices.item(item["appid"], item["hash"]),
+                        action, detail = rules.decide_item(item, self.prices.item_stats(item["appid"], item["hash"]),
                                                            self.settings)
                     except Exception as e:
                         self.log(f"Couldn't price {item['name']}: {e}", "warn")
@@ -562,7 +563,7 @@ class Farm(market.MarketParts):
                 self.state["items"]["checked"] = time.time()
             if manual or offered:
                 self.log(f"Items checked: {offered} to review"
-                         + (f", {held} left alone (nobody selling, under your minimum or kept)" if held else ""))
+                         + (f", {held} left alone (nobody selling, not selling lately, under your minimum or kept)" if held else ""))
         except Exception as e:
             self.log(f"Couldn't check your items: {e}", "warn")
 
@@ -622,9 +623,9 @@ class Farm(market.MarketParts):
             return self._do_set(e)
         if e["kind"] == "item":
             it = e["item"]
-            buyer = rules.asking_price(self.prices.item(it["appid"], it["hash"]), self.settings)
+            buyer = rules.asking_price(rules.realistic(self.prices.item_stats(it["appid"], it["hash"])), self.settings)
             if not buyer:
-                raise RuntimeError("nobody is selling one now, so there's no price to match")
+                raise RuntimeError("nobody is selling or buying one now, so there's no price to go by")
             receive = rules.received(buyer)
             steam.sell(self.session, it["assetid"], receive, it["appid"], it["context"], it["amount"])
             with self.lock:
@@ -688,6 +689,8 @@ class Farm(market.MarketParts):
                 "listings": st["listings"], "sales": self.sales_summary(), "gems": st["gems"],
                 "boosters": dict(st["boosters"], options=[o for o in st["boosters"]["options"] if o.get("profit") is not None][:150]),
                 "sets": dict(st["sets"], finishing=[dict(v, appid=int(k)) for k, v in st["finishing"].items()]),
+                "levelup": dict({k: v for k, v in st["levelup"].items() if k != "options"},
+                                options=len(st["levelup"]["options"]), plan=self.levelup_plan()),
             }
 
     def _qr(self):

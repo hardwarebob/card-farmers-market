@@ -63,10 +63,13 @@ def test_items_are_left_alone_by_default():
 
 def test_item_rules():
     item = {"hash": "Case", "name": "Case"}
-    assert rules.decide_item(item, 119, S) == ("sell", {"buyer": 119, "receive": 104})
-    assert rules.decide_item(item, 4, S)[0] == "keep"            # under items_min_cents
-    assert rules.decide_item(item, None, S)[0] == "keep"         # nobody sells one
-    assert rules.decide_item(item, 119, dict(S, items_keep=["Case"]))[0] == "keep"
+    st = lambda lowest, median=None, volume=5: {"lowest": lowest, "median": median, "volume": volume}
+    assert rules.decide_item(item, st(119), S) == ("sell", {"buyer": 119, "receive": 104, "volume": 5, "median": None})
+    assert rules.decide_item(item, st(4), S)[0] == "keep"              # under items_min_cents
+    assert rules.decide_item(item, st(None), S)[0] == "keep"           # nobody sells one
+    assert rules.decide_item(item, st(119), dict(S, items_keep=["Case"]))[0] == "keep"
+    assert rules.decide_item(item, st(119, volume=0), S)[0] == "keep"  # nobody bought one lately
+    assert rules.decide_item(item, st(119, median=80), S)[1]["buyer"] == 80   # sales went for less than the ask
 
 
 # --- badges page ---------------------------------------------------------------------------------
@@ -178,6 +181,7 @@ def world(tmp_path, monkeypatch):
         f.prices.gems = lambda *a: 20
         f.prices.gem_sack = lambda: 70
         f.prices.item = lambda appid, name: 119
+        f.prices.item_stats = lambda appid, name: {"lowest": 119, "median": 119, "volume": 9}
         f.update_settings({"sell": "auto"})
         return f
     w["make"] = make
@@ -451,7 +455,7 @@ def test_repricing_cancels_and_relists_at_todays_price(world, monkeypatch):
         stock[0] + [({"assetid": "A9", "classid": "C", "instanceid": "0"}, {})])))
     monkeypatch.setattr(steam, "_inventory", lambda s, a, c: stock[-1])
     monkeypatch.setattr(market_mod.time, "sleep", lambda x: None)
-    f.prices.game_cards = lambda appid: {"10-Hero": 15}
+    f.prices.item_stats = lambda appid, h: {"lowest": 15, "median": 16, "volume": 4}
     f.state["listings"]["items"] = [listing(verdict="undercut"), listing(listingid="c", verdict="ok")]
     f.decide_listings("undercut", "reprice")
     assert [j["entry"]["id"] for j in f.state["queue"]] == ["L1"]   # only the undercut one
@@ -589,7 +593,76 @@ def test_only_listings_that_could_be_repriced_are_priced(world, monkeypatch):
         listing(listingid="min", buyer=4),                               # at the 3c minimum (+2c gap)
         listing(listingid="old", buyer=20, hash="10-Hero")])             # could be repriced
     f = world["make"]()
-    f._lowest = lambda appid, h: asked.append(h) or 12
+    f._stats = lambda appid, h: asked.append(h) or {"lowest": 12, "median": 13, "volume": 3}
     f._check_listings()
     got = {l["listingid"]: l["verdict"] for l in f.state["listings"]["items"]}
     assert got == {"new": "young", "min": "floor", "old": "undercut"} and asked == ["10-Hero"]
+
+
+def test_repricing_follows_what_sells_not_one_cheap_seller(world):
+    f = world["make"]()
+    now = time.time()
+    assert f._verdict(listing(buyer=20), rules.realistic({"lowest": 19, "median": 25, "volume": 4}), now) == "ok"
+    assert f._verdict(listing(buyer=20), rules.realistic({"lowest": 30, "median": 12, "volume": 4}), now) == "undercut"
+
+
+# --- level up -----------------------------------------------------------------------------------
+def test_steam_level_xp():
+    assert market_mod.xp_for_level(9) == 100 and market_mod.xp_for_level(10) == 200 and market_mod.xp_for_level(55) == 600
+    assert market_mod.xp_between(55, 130, 56) == 130 and market_mod.xp_between(55, 130, 57) == 730
+    assert market_mod.level_after(55, 130, 200) == 56 and market_mod.level_after(55, 130, 800) == 57
+
+
+def test_the_cheapest_crafts_reach_the_target_within_budget(world):
+    f = world["make"]()
+    opt = lambda appid, cost, levels=1, forgone=0: {"appid": appid, "game": f"G{appid}", "levels": levels, "cost": cost,
+                                                     "forgone": forgone, "source": "market", "missing_hashes": [], "missing": []}
+    f.state["levelup"] = {"level": 55, "xp": 0, "xp_to_next": 130, "maxed": 0, "checked": 1,
+                          "options": [opt(1, 30, levels=3), opt(2, 20), opt(3, 10, forgone=30)]}
+    f.update_settings({"levelup_target": 56, "levelup_budget_cents": 100})
+    plan = f.levelup_plan()                      # 130 XP: two crafts, cheapest first (G2 20c, then G1 30c)
+    assert [c["appid"] for c in plan["crafts"]] == [2, 1] and plan["cost"] == 50 and plan["reaches"] == 56
+    f.update_settings({"levelup_target": 57, "levelup_budget_cents": 60})
+    plan = f.levelup_plan()                      # 730 XP wanted, the budget stops it short
+    assert plan["cost"] <= 60 and plan["short"] > 0
+
+
+def test_level_up_queues_the_plan_and_keeps_the_cards(world, monkeypatch):
+    log = buying_world(monkeypatch)
+    monkeypatch.setattr(steam, "cheapest_listing", lambda s, p, h: 5)
+    f = world["make"]()
+    f.state["levelup"] = {"level": 9, "xp": 0, "xp_to_next": 200, "maxed": 0, "checked": 1,
+                          "options": [{"appid": 7, "game": "G", "levels": 2, "cost": 10, "forgone": 0, "source": "market",
+                                       "missing_hashes": ["7-A", "7-B"], "missing": ["A", "B"]}]}
+    f.level_up()
+    assert [j["entry"]["id"] for j in f.state["queue"]] == ["set-7-0", "set-7-1"] and f.finishing(7)
+    first = f.state["queue"][0]["entry"]
+    f._do_set(first)                             # limit comes with the plan: 10c * 1.25 + 2
+    f.state["queue"].pop(0)
+    assert f.finishing(7)                        # another craft of it is still queued
+    f._do_set(f.state["queue"][0]["entry"])
+    assert not f.finishing(7) and log.count(("craft", 7)) == 2
+
+
+def test_after_a_429_market_lookups_pause_together(tmp_path, monkeypatch):
+    calls = []
+
+    def limited(url):
+        calls.append(url)
+        raise steam.HttpError(429)
+    monkeypatch.setattr(steam, "get_json", limited)
+    monkeypatch.setattr(steam.time, "sleep", lambda x: None)
+    p = steam.Prices(str(tmp_path / "prices.json"))
+    for appid in (1, 2, 3):
+        with pytest.raises(steam.HttpError):
+            p.item_stats(753, f"{appid}-Pack")
+    assert len(calls) == 1 and p._backoff == 5      # only the first one reached Steam
+
+
+def test_recent_sales_from_price_history():
+    import calendar
+    now = calendar.timegm((2026, 11, 4, 12, 30, 0))
+    points = [["Nov 02 2026 12: +0", 0.90, "50"],       # too old
+              ["Nov 04 2026 01: +0", 0.20, "3"], ["Nov 04 2026 11: +0", 0.30, "10"], ["Nov 04 2026 12: +0", 0.40, "4"]]
+    assert steam.recent_sales(points, now=now) == {"median": 30, "volume": 17}
+    assert steam.recent_sales([], now=now) == {"median": None, "volume": 0}

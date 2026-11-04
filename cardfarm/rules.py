@@ -21,12 +21,15 @@ DEFAULTS = {
     "items_inventories": [],     # "appid/context" of inventories to look in, e.g. "730/2"
     "items_min_cents": 5,        # don't list an item for less than this (what a buyer pays)
     "items_keep": [],            # market names never listed, e.g. a skin you use
+    "items_min_sales": 1,        # only offer items that sold at least this many times in the last day (0: any)
     # your listings
     "reprice_after_hours": 24,   # only reprice listings at least this old
     "reprice_gap_cents": 2,      # ...and only when someone sells for more than this below yours
     "cancel_after_days": 0,      # cancel listings unsold this long (0: never); they come back for review
     "notify_sales": True,        # desktop notification when things sell
     "booster_min_sales": 2,      # a booster pack is only worth making if at least this many sold in the last day
+    "levelup_target": 0,         # Steam level to reach (0: the next one)
+    "levelup_budget_cents": 100, # most to spend on one level-up plan
     "set_budget_cents": 50,      # most to spend buying the missing cards of one set
 }
 MODES = ("auto", "review", "off")
@@ -52,7 +55,8 @@ def clean(patch):
         elif k == "games_at_once":
             out[k] = max(1, min(32, int(v)))
         elif k in ("stall_minutes", "min_sell_cents", "items_min_cents", "reprice_after_hours", "reprice_gap_cents",
-                   "cancel_after_days", "set_budget_cents", "booster_min_sales"):
+                   "cancel_after_days", "set_budget_cents", "booster_min_sales", "items_min_sales", "levelup_target",
+                   "levelup_budget_cents"):
             out[k] = max(0, int(v))
         elif k in ("sell", "gems", "items_new") and v in MODES:
             out[k] = v
@@ -120,13 +124,24 @@ def decide(card, lowest_cents, gems, sack_cents, settings):
     return "keep", {"why": "nobody is selling it and it isn't worth gems"}
 
 
-def decide_item(item, lowest_cents, settings):
-    """('sell', {buyer, receive}) or ('keep', {why}) for an item that isn't a card."""
+def realistic(stats):
+    """What something really sells for: the lower of its cheapest listing and its median sale over the
+    last day (a stale, high asking price doesn't count). None when there's neither."""
+    prices = [p for p in (stats.get("lowest"), stats.get("median")) if p]
+    return min(prices) if prices else None
+
+
+def decide_item(item, stats, settings):
+    """('sell', {buyer, receive, volume, median}) or ('keep', {why, ...}) for an item that isn't a card.
+    stats: {"lowest", "median", "volume"} from the market."""
     if item["hash"] in settings["items_keep"]:
         return "keep", {"why": "on your keep list"}
-    buyer = asking_price(lowest_cents, settings)
+    seen = {"volume": stats.get("volume", 0), "median": stats.get("median")}
+    buyer = asking_price(realistic(stats), settings)
     if not buyer:
-        return "keep", {"why": "nobody is selling one", "buyer": None}
+        return "keep", {"why": "nobody is selling one", "buyer": None, **seen}
+    if stats.get("volume", 0) < settings["items_min_sales"]:
+        return "keep", {"why": "doesn't sell (too few sales in the last day)", "buyer": buyer, **seen}
     if buyer < settings["items_min_cents"] or received(buyer) < 1:
-        return "keep", {"why": "under your minimum", "buyer": buyer, "receive": received(buyer)}
-    return "sell", {"buyer": buyer, "receive": received(buyer)}
+        return "keep", {"why": "under your minimum", "buyer": buyer, "receive": received(buyer), **seen}
+    return "sell", {"buyer": buyer, "receive": received(buyer), **seen}
