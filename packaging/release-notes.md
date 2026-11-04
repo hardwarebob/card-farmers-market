@@ -7,7 +7,7 @@ Card Farmer's Market farms your Steam trading card drops, then sells each card o
 - **Cards tab:** card sets you hold most of: "Buy & craft" buys the missing cards (within your limit, checked before anything is bought) and crafts the badge; the set's cards are kept, not sold, until it's done. Also how long each game took per drop.
 - **Sales checks:** cards, items and booster packs are priced at what really sells, not at old asking prices nobody pays.
 - **Easier on Steam's market:** prices are looked up while signed in, and when Steam says "too many requests", lookups pause for a while instead of failing over and over.
-- **Intel Macs** have their own download now.
+- **One Mac download for every Mac:** `Card-Farm-macOS.zip` now runs on Apple silicon and Intel.
 - New name: Card Farmer's Market (the download files keep the Card Farm name for now, so updates keep working).
 - Updates install themselves: use the Update button at the top when a new version is out.
 
@@ -16,8 +16,7 @@ Card Farmer's Market farms your Steam trading card drops, then sells each card o
 | System | File | How to start it |
 |---|---|---|
 | Windows 10 / 11 (64-bit) | `Card-Farm-Windows.zip` | Unzip it anywhere and run **Card Farm.exe** in the `Card Farm` folder. Windows may warn that the app is from an unknown publisher: choose **More info → Run anyway**. |
-| macOS 12 or newer, Apple silicon (M1 and later) | `Card-Farm-macOS.zip` | Unzip it and move **Card Farm** to Applications. The first time, right-click it and choose **Open**, then **Open** again (it isn't notarised by Apple). |
-| macOS 12 or newer, Intel | `Card-Farm-macOS-Intel.zip` | The same as above. |
+| macOS 12 or newer, Apple silicon or Intel | `Card-Farm-macOS.zip` | Unzip it and move **Card Farm** to Applications. The first time, right-click it and choose **Open**, then **Open** again (it isn't notarised by Apple). `Card-Farm-macOS-Intel.zip` is the same app, there so older copies on Intel Macs can update. |
 | Linux | `card-farm.pyz` | `chmod +x card-farm.pyz && ./card-farm.pyz`. Needs Python 3.10+, GTK 4, libadwaita and WebKitGTK 6 with PyGObject (most GNOME and KDE desktops have them). |
 
 Steam must be running and signed in. Sign-in is by QR code with the Steam mobile app; it never sees your password. Market listings still need your OK in the Steam mobile app.

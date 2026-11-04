@@ -2,7 +2,8 @@
 
   python packaging/build.py linux     card-farm.pyz (runs with the system's Python and GTK)
   python packaging/build.py windows   Card-Farm-Windows.zip ("Card Farm" folder with Card Farm.exe)
-  python packaging/build.py macos     Card-Farm-macOS.zip (Card Farm.app; -Intel on an Intel Mac)
+  python packaging/build.py macos     Card-Farm-macOS.zip (Card Farm.app; for both kinds of Mac when built
+                                      with python.org's universal2 Python, else -Intel on an Intel Mac)
 
 Windows and macOS need `pip install pyinstaller pywebview pillow` first. Every download carries
 THIRD-PARTY-NOTICES.txt: the licences of Python and of each library bundled into it (the .pyz
@@ -111,8 +112,11 @@ def windows():
 
 def macos():
     import plistlib
-    pyinstaller(ROOT / "packaging" / "icon.png")
+    universal = {"x86_64", "arm64"} <= _archs(sys.executable)
+    pyinstaller(ROOT / "packaging" / "icon.png", ["--target-arch", "universal2"] if universal else [])
     app = DIST / "Card Farm.app"
+    if universal:
+        _check_universal(app)
     info = app / "Contents" / "Info.plist"  # the shown name (menu bar, About) and version
     plist = plistlib.loads(info.read_bytes())
     plist.update(CFBundleName=NAME, CFBundleDisplayName=NAME, CFBundleShortVersionString=version(), CFBundleVersion=version())
@@ -121,9 +125,30 @@ def macos():
     # sign again after every change to the bundle (a change after signing breaks it on Apple silicon)
     subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(app)], check=True)
     subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
-    out = DIST / ("Card-Farm-macOS-Intel.zip" if platform.machine() == "x86_64" else "Card-Farm-macOS.zip")
+    out = DIST / ("Card-Farm-macOS.zip" if universal or platform.machine() != "x86_64" else "Card-Farm-macOS-Intel.zip")
     subprocess.run(["ditto", "-c", "-k", "--keepParent", str(app), str(out)], check=True)  # keeps the app's links and signature
+    if universal:  # Intel Macs on 0.3.0-beta.9 and older only look for the -Intel name
+        shutil.copy(out, DIST / "Card-Farm-macOS-Intel.zip")
     return out
+
+
+def _archs(path):
+    """The processor kinds a Mach-O file has code for (empty for anything else)."""
+    with open(path, "rb") as f:
+        if f.read(4) not in (b"\xca\xfe\xba\xbe", b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe"):
+            return set()
+    done = subprocess.run(["lipo", "-archs", str(path)], capture_output=True, text=True)
+    return set(done.stdout.split()) if done.returncode == 0 else set()
+
+
+def _check_universal(app):
+    """Every program file in the app has Apple silicon and Intel code: the build machine can only
+    run one of them, so this is what shows the other is there."""
+    thin = [str(p.relative_to(app)) for p in app.rglob("*")
+            if p.is_file() and not p.is_symlink() and (a := _archs(p)) and not {"x86_64", "arm64"} <= a]
+    if thin:
+        sys.exit("not universal: " + ", ".join(thin))
+    print("every program file in the app runs on Apple silicon and Intel")
 
 
 if __name__ == "__main__":

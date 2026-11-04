@@ -54,7 +54,7 @@ tells you when some are waiting. Prices are looked up again just before each lis
 Get the latest version from the [Releases page](https://github.com/maybeimdreaming/card-farmers-market/releases):
 
 - **Windows 10/11:** `Card-Farm-Windows.zip`. Unzip it and run `Card Farm.exe`. Windows may say the publisher is unknown: **More info → Run anyway**. Closing the window while farming minimises it; use **Quit** at the top of the page to stop.
-- **macOS:** `Card-Farm-macOS.zip` for Apple silicon (M1 and later), `Card-Farm-macOS-Intel.zip` for Intel Macs. Move `Card Farm` to Applications; the first time, right-click it and choose **Open** (it isn't notarised).
+- **macOS (Apple silicon and Intel):** `Card-Farm-macOS.zip`. Move `Card Farm` to Applications; the first time, right-click it and choose **Open** (it isn't notarised). (`Card-Farm-macOS-Intel.zip` is the same app, kept so older copies on Intel Macs can update.)
 - **Linux:** `card-farm.pyz`. `chmod +x card-farm.pyz && ./card-farm.pyz`, or install with pipx as below.
 
 Steam must be running and signed in, and you need the Steam mobile app with Steam Guard for the sign-in and for confirming market listings. Card Farmer's Market finds Steam's own API library (`steam_api64.dll`, `libsteam_api.dylib` or `libsteam_api.so`) in any game you have installed and doesn't ship a copy; on Linux, any Proton version has one.
@@ -136,6 +136,9 @@ light theme. It fails if anything scrolls sideways or the page's script throws. 
 
 Releases are built by `.github/workflows/release.yml` when a `v*` tag is pushed. Each build is
 opened once on a real Windows and macOS machine to check its window works before it's published.
+The Mac app is built once for both kinds of Mac, on an Intel Mac with python.org's universal2 Python;
+the build checks every program file in it has Apple silicon code too, and opens it on an Apple silicon
+Mac as well when GitHub has one free (the release doesn't wait for that).
 
 The code uses only the Python standard library, plus the system's web view for the window (GTK and
 WebKitGTK on Linux; on Windows and macOS the pywebview library, which uses Edge WebView2 or WebKit),

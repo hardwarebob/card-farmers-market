@@ -771,9 +771,16 @@ def test_level_up_by_buy_orders(world, monkeypatch):
     assert f.state["orders"] == [] and ("cancel", "7-A") in log
 
 
-def test_intel_macs_get_their_own_download():
-    assert update.asset_names("macos", "x86_64")[-1] == "Card-Farm-macOS-Intel.zip"
+def test_intel_macs_take_their_own_download_or_the_universal_one(monkeypatch):
     assert update.asset_names("macos", "arm64")[-1] == "Card-Farm-macOS.zip"
+    assert "Card-Farm-macOS-Intel.zip" not in update.asset_names("macos", "arm64")
+    both = release("v0.4.0", names=("Card-Farm-macOS.zip", "Card-Farm-macOS-Intel.zip"))
+    universal = release("v0.4.0", names=("Card-Farm-macOS.zip",))
+    monkeypatch.setattr(update.platform, "machine", lambda: "arm64")
+    assert update.newest([both], "v0.3.0-beta.9", "macos")["url"].endswith("/Card-Farm-macOS.zip")
+    monkeypatch.setattr(update.platform, "machine", lambda: "x86_64")
+    assert update.newest([both], "v0.3.0-beta.9", "macos")["url"].endswith("/Card-Farm-macOS-Intel.zip")
+    assert update.newest([universal], "v0.3.0-beta.9", "macos")["url"].endswith("/Card-Farm-macOS.zip")
 
 
 def test_new_download_names_are_preferred_and_old_ones_still_found():

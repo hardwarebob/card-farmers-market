@@ -19,7 +19,10 @@ REPO = "maybeimdreaming/card-farmers-market"
 # still found, so a release can switch to the new names once copies understand both
 ASSETS = {"windows": ["Card-Farmers-Market-Windows.zip", "Card-Farm-Windows.zip"],
           "macos": ["Card-Farmers-Market-macOS.zip", "Card-Farm-macOS.zip"],
-          "macos-intel": ["Card-Farmers-Market-macOS-Intel.zip", "Card-Farm-macOS-Intel.zip"],
+          # the Mac download runs on both kinds of Mac since 0.3.0-beta.10; the -Intel names come first
+          # for releases from before that
+          "macos-intel": ["Card-Farmers-Market-macOS-Intel.zip", "Card-Farm-macOS-Intel.zip",
+                          "Card-Farmers-Market-macOS.zip", "Card-Farm-macOS.zip"],
           "pyz": ["card-farmers-market.pyz", "card-farm.pyz"]}
 
 try:
@@ -38,7 +41,7 @@ def version_key(tag):
 
 
 def asset_names(kind, machine=None):
-    """This computer's download, by its names (Macs with an Intel processor have their own)."""
+    """This computer's download, by its names (Macs with an Intel processor had their own)."""
     if kind == "macos" and (machine or platform.machine()) == "x86_64":
         return ASSETS["macos-intel"]
     return ASSETS[kind]

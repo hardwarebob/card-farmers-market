@@ -78,13 +78,19 @@ jobs:
           path: dist/Card-Farm-Windows.zip
 
   macos:
-    timeout-minutes: 5
-    runs-on: macos-latest
+    # one app for both kinds of Mac, built on an Intel Mac: GitHub's Apple silicon machines are often
+    # too busy to get (jobs waited 15 min and were dropped), its Intel ones aren't
+    timeout-minutes: 8
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      - name: Python with Apple silicon and Intel code (python.org's universal2 build)
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/python.pkg" https://www.python.org/ftp/python/3.12.10/python-3.12.10-macos11.pkg
+          echo "8373e58da4ea146b3eb1c1f9834f19a319440b6b679b06050b1f9ee3237aa8e4  $RUNNER_TEMP/python.pkg" | shasum -a 256 -c
+          sudo installer -pkg "$RUNNER_TEMP/python.pkg" -target /
+          /Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12 -m venv "$RUNNER_TEMP/venv"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
       - name: Stamp the version (tag builds)
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
@@ -110,46 +116,35 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: dist/Card-Farm-macOS.zip
+          path: |
+            dist/Card-Farm-macOS.zip
+            dist/Card-Farm-macOS-Intel.zip
 
-  macos-intel:
+  macos-apple-silicon:
+    # the same app opened on an Apple silicon Mac, when GitHub has one free; the release doesn't wait for it
+    needs: macos
     timeout-minutes: 5
-    runs-on: macos-15-intel
+    runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/download-artifact@v4
         with:
-          python-version: "3.12"
-      - name: Stamp the version (tag builds)
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: echo "VERSION = \"$GITHUB_REF_NAME\"" > cardfarm/_version.py
-      - run: pip install pytest pyinstaller pywebview pillow
-      - run: python -m pytest tests -q
-      - run: python packaging/build.py macos
-      - name: The built app opens its window and shows the sign-in page
+          name: macos
+      - name: The app opens its window and shows the sign-in page
         run: |
+          ditto -x -k Card-Farm-macOS.zip .
           export CARD_FARM_DATA="$RUNNER_TEMP/cf-data" CARD_FARM_SELFTEST="$RUNNER_TEMP/selftest.json"
-          "dist/Card Farm.app/Contents/MacOS/Card Farm" &
+          test "$(uname -m)" = arm64
+          "Card Farm.app/Contents/MacOS/Card Farm" &
           pid=$!
           for i in $(seq 120); do kill -0 $pid 2>/dev/null || break; sleep 1; done
           kill $pid 2>/dev/null && { echo "the window didn't finish its self-test"; exit 1; }
           cat "$CARD_FARM_SELFTEST"
           python3 -c "import json,sys; sys.exit(0 if json.load(open('$CARD_FARM_SELFTEST'))['ok'] else 1)"
-      - name: The idler child starts from the built app
-        run: |
-          set +e; "dist/Card Farm.app/Contents/MacOS/Card Farm" --idle-child /no/such/libsteam_api.dylib; code=$?; set -e
-          test "$code" = 2
-      - name: The app's signature is intact
-        run: codesign --verify --deep --strict --verbose=2 "dist/Card Farm.app"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: macos-intel
-          path: dist/Card-Farm-macOS-Intel.zip
+          codesign --verify --deep --strict "Card Farm.app"
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, windows, macos, macos-intel]
+    needs: [linux, windows, macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
