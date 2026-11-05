@@ -6,6 +6,7 @@ import base64
 import json
 import os
 import secrets
+import threading
 import time
 import urllib.parse
 
@@ -27,6 +28,7 @@ class Session:
         self.steamid = self.account = self.refresh_token = self.access_token = None
         self.sessionid = secrets.token_hex(12)
         self.qr = None  # pending sign-in: {client_id, request_id, url, interval, expires}
+        self._renewing = threading.Lock()  # the farm, market lookups and background jobs all ask for cookies
         if os.path.exists(path):
             saved = json.load(open(path))
             for k in ("steamid", "account", "refresh_token", "access_token", "sessionid"):
@@ -106,8 +108,13 @@ class Session:
         steamid, _, token = value.partition("||")
         return token if token and steamid == self.steamid else None
 
+    def _stale(self):
+        return not self.access_token or _claims(self.access_token).get("exp", 0) < time.time() + 3600
+
     def cookies(self):
-        if not self.access_token or _claims(self.access_token).get("exp", 0) < time.time() + 3600:
-            self.renew()
+        if self._stale():
+            with self._renewing:  # one renewal at a time; whoever waited finds a fresh token
+                if self._stale():
+                    self.renew()
         return {"steamLoginSecure": f"{self.steamid}%7C%7C{self.access_token}", "sessionid": self.sessionid,
                 "Steam_Language": "english"}

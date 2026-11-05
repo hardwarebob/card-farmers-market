@@ -1,6 +1,8 @@
 Card Farmer's Market farms your Steam trading card drops, then sells each card or turns it into gems by rules you set. The Items tab can also list skins, cases and other marketable items, only when you say so.
 
 **New in 0.4:**
+- **A garden:** a new look, with the tabs on a strip of grass over rocky ground, and a flower in the grass for every card you farm (foil cards grow a shimmering one). Themes: Light, Dark, Pink, or Auto to follow your system.
+- Friendlier wording throughout, shorter explanations, and "Activity" instead of "Tape".
 - **Stays signed in.** The sign-in now renews itself the way the Steam website does. Before, it stopped working about a day after signing in: drops weren't seen anymore and the games list went stale (games looked like they still had drops).
 - **Start / Stop farming** at the top of the window.
 - **Playtime first, then one game at a time:** games with less than 2 hours of playtime idle together (up to 32) until they reach it, since most games don't drop cards before that; then games idle one at a time, in your "Farm first" order, which is how Steam drops cards fastest. The "Games at once" setting is gone.

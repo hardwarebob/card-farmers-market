@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import pathlib
@@ -912,3 +913,40 @@ def test_at_most_32_games_build_playtime_at_once(world):
     f.state["playtime"] = {str(a): 0 for a in range(100, 140)}
     want, bulk = f._pick()
     assert bulk and len(want) == 32
+
+
+def test_threads_needing_cookies_at_once_renew_the_sign_in_once(tmp_path, monkeypatch):
+    from cardfarm import auth
+    s = auth.Session(str(tmp_path / "session.json"))
+    s.steamid, s.refresh_token, s.access_token = "7656", "refresh", None
+    calls = []
+
+    def renew():
+        calls.append(1)
+        time.sleep(0.2)
+        body = base64.urlsafe_b64encode(json.dumps({"exp": time.time() + 86400}).encode()).decode().rstrip("=")
+        s.access_token = f"x.{body}.y"
+    monkeypatch.setattr(s, "renew", renew)
+    threads = [threading.Thread(target=s.cookies) for _ in range(5)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert calls == [1]
+
+
+def test_foil_drops_are_remembered_for_the_garden(world):
+    f = world["make"]()
+    world["badges"] = [{"appid": 10, "name": "Game", "drops": 3, "earned": 3}]
+    f._refresh_badges(); f._check_inventory()
+    world["cards"] = [card(assetid="1")]
+    world["badges"] = [{"appid": 10, "name": "Game", "drops": 2, "earned": 3}]
+    f._refresh_badges(); f._check_inventory()
+    world["cards"].append(card(assetid="2", foil=True, name="Hero (Foil)", hash="10-Hero (Foil)"))
+    world["badges"] = [{"appid": 10, "name": "Game", "drops": 1, "earned": 3}]
+    f._refresh_badges(); f._check_inventory()
+    assert f.state["stats"]["drops"] == 2 and f.state["stats"]["foil_drops"] == [1]
+    assert f.snapshot()["stats"]["foil_drops"] == [1]
+
+
+def test_the_theme_is_a_setting():
+    assert rules.DEFAULTS["theme"] == "auto"
+    assert rules.clean({"theme": "pink"}) == {"theme": "pink"} and rules.clean({"theme": "neon"}) == {}

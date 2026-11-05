@@ -3,6 +3,10 @@
 Farm your Steam trading card drops on Linux, Windows or macOS, then sell each card or turn it into gems by rules you set.
 Card Farmer's Market is a desktop app with its own window. It keeps farming in the background when you close it.
 
+It looks like a little garden: the tabs sit on a strip of grass, and **a flower grows in the grass for every card
+you farm**. Foil cards grow a shimmering one. Pick **Light**, **Dark** or **Pink** at the top, or **Auto** to follow
+your system.
+
 ![The Cards tab](docs/cards.png)
 
 ### Cards

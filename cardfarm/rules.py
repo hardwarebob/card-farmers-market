@@ -4,6 +4,7 @@ import os
 import re
 
 DEFAULTS = {
+    "theme": "auto",             # auto (the system's light or dark) | light | dark | pink
     "farming": True,
     "order": "value",            # value: priciest cards first | most: most drops left | fewest: closest to done
     "pause_when_playing": True,  # step aside while you play something yourself
@@ -63,6 +64,8 @@ def clean(patch):
         elif k == "order" and v in ("value", "most", "fewest"):
             out[k] = v
         elif k == "pricing" and v in ("match", "undercut"):
+            out[k] = v
+        elif k == "theme" and v in ("auto", "light", "dark", "pink"):
             out[k] = v
         elif k == "levelup_buying" and v in ("now", "orders"):
             out[k] = v

@@ -5,7 +5,7 @@ network): for checking the layout after a change, and for the README.
 
 Needs GTK 4, libadwaita, WebKitGTK 6, and `cage` + `dbus-run-session` to run the window on a
 hidden display of its own. Each tab is shot wide (1280 px) and narrow (430 px), and wide in the
-light theme as well; the run fails
+light and pink themes as well; the run fails
 if a page scrolls sideways or the page's script throws."""
 import json
 import os
@@ -95,7 +95,8 @@ def demo(farm):
          "detail": {"buyer": 84, "receive": 74, "gems": 120}, "at": now},
         {"id": "c3", "kind": "card", "card": card(3, "Orchard Gate", "Quiet Orchard"), "action": "gems",
          "detail": {"buyer": 3, "receive": 1, "gems": 15}, "at": now}]
-    st["stats"] = {"drops": 37, "listed": 29, "listed_cents": 214, "gems": 340, "items_listed": 6, "items_cents": 912}
+    st["stats"] = {"drops": 37, "listed": 29, "listed_cents": 214, "gems": 340, "items_listed": 6, "items_cents": 912,
+                   "foil_drops": [4, 19, 33]}  # foil flowers in the garden
     texts = [("sell", "Listed Lantern Keeper (Paper Lanterns) for $0.12 (you get $0.10)"),
              ("info", "New card: Lantern Keeper (Paper Lanterns)"), ("gems", "Turned Orchard Gate (Quiet Orchard) into 15 gems"),
              ("warn", "Steam said too many requests; market lookups wait 5 min"), ("info", "Listings checked: 41 on the market, 3 undercut"),
@@ -254,6 +255,9 @@ def inside(out):
     steps += [width(None), theme("light")]
     for t in TABS:  # the light theme too, wide
         steps += [tab(t), shot(f"{t}-light")]
+    steps.append(theme("pink"))
+    for t in TABS:  # and the pink one
+        steps += [tab(t), shot(f"{t}-pink")]
     steps.append(check("the page's script ran without errors", no_errors, "true"))
 
     def started(*a):

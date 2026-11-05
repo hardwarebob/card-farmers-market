@@ -27,7 +27,8 @@ OWED_FOR = 2 * 3600     # a drop count no card turned up for is forgotten after 
 
 def fresh_state():
     return {"seen": [], "review": [], "history": [], "games": [], "skipped": {}, "idling": {},
-            "stats": {"drops": 0, "listed": 0, "listed_cents": 0, "gems": 0, "items_listed": 0, "items_cents": 0},
+            "stats": {"drops": 0, "listed": 0, "listed_cents": 0, "gems": 0, "items_listed": 0, "items_cents": 0,
+                      "foil_drops": []},  # which drops (by number, from 0) were foil cards: the garden's foil flowers
             "baseline": False,
             "queue": [],     # [{"action", "entry"}] still to do, in order; kept across restarts
             "kept": [],      # asset ids you chose to keep, so they aren't offered again
@@ -485,6 +486,10 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
                 if owed:
                     self.state["owed"][key] = owed[1:]
                     self.state["stats"]["drops"] += 1
+                    if card["foil"]:
+                        foils = self.state["stats"].setdefault("foil_drops", [])
+                        foils.append(self.state["stats"]["drops"] - 1)
+                        del foils[:-300]  # more than the garden ever shows
                     self._farmed_one(card["appid"])
         with self.lock:
             self.state["seen"] = sorted((seen & ids) | handled)
