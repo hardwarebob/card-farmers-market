@@ -42,6 +42,10 @@ main { max-width: 1180px; margin: 0 auto; padding: 0 20px 64px; }
 .mast .ver { font-family: var(--mono); font-size: 11px; color: var(--faint); padding-bottom: 8px; }
 .mast .small-go { margin-bottom: 4px; padding: 5px 8px; font-size: 11px; }
 .mast a { color: var(--signal); margin-bottom: 7px; font-family: var(--mono); }
+/* the Ko-fi link reads like the header's other links (Sign out, Quit) */
+.mast a.support { color: var(--ink); font: 600 12px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase;
+  text-decoration: underline; text-underline-offset: 3px; padding: 2px 0; margin-bottom: 6px; }
+.mast a.support:hover { color: var(--signal); }
 .tabs { display: flex; margin-right: auto; max-width: 100%; overflow-x: auto; scrollbar-width: none; padding-right: 1px; }
 .tabs button { white-space: nowrap; flex: none; }
 @media (max-width: 620px) {  /* tabs wrap onto two rows, each row filled */
@@ -206,6 +210,7 @@ td.acts a:hover { color: var(--signal); }
     <span class="ver" id="ver"></span>
     <button id="update" class="go small-go" hidden></button>
     <a id="update-link" class="small" target="_blank" rel="noopener" hidden></a>
+    <a class="support" href="https://ko-fi.com/m4ybe" target="_blank" rel="noopener" title="Card Farmer's Market is free; tips help keep it going">Support on Ko-fi</a>
     <button id="signout" class="link" hidden>Sign out</button>
     <button id="quit" class="link" hidden title="Stop farming and close the app">Quit</button>
   </div>
