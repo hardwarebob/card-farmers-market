@@ -861,3 +861,21 @@ def test_free_to_play_games_are_skipped_unless_you_try_them(world, monkeypatch):
 
 def test_amounts_read_in_cents_under_a_dollar_and_dollars_above():
     assert market_mod.cents_text(50) == "50¢" and market_mod.cents_text(150) == "$1.50" and market_mod.cents_text(500) == "$5.00"
+
+
+def test_several_games_without_drops_suggest_one_at_a_time(world, monkeypatch):
+    f = world["make"]()
+    f.state["idling"] = {"10": {"since": 0}, "11": {"since": 0}}
+    clock = [1000.0]
+    monkeypatch.setattr(farm_mod.time, "time", lambda: clock[0])
+    f._watch_together(False)
+    assert f.snapshot()["together_no_drop"] == 0
+    clock[0] += 2 * 3600
+    f._watch_together(False)
+    assert f.snapshot()["together_no_drop"] == 2 * 3600
+    f._watch_together(True)  # a drop
+    assert f.snapshot()["together_no_drop"] == 0
+    f.state["idling"] = {"10": {"since": 0}}
+    clock[0] += 5 * 3600
+    f._watch_together(False)  # one at a time: no notice
+    assert f.snapshot()["together_no_drop"] == 0

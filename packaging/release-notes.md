@@ -3,6 +3,7 @@ Card Farmer's Market farms your Steam trading card drops, then sells each card o
 **New in 0.4:**
 - **Stays signed in.** The sign-in now renews itself the way the Steam website does. Before, it stopped working about a day after signing in: drops weren't seen anymore and the games list went stale (games looked like they still had drops).
 - **Start / Stop farming** at the top of the window.
+- **One game at a time drops cards fastest:** the window now says so, and when several games idle together for 2 hours without a drop, it offers to switch to one at a time.
 - **Amounts in cents or dollars:** limits show as 50¢ under a dollar and $5.00 from there on; type either.
 - A **Support on Ko-fi** link at the top of the window, for anyone who'd like to leave a tip.
 - **Skipping:** a game you skip stays skipped until you unskip it, **Unskip all** brings every game back, and free-to-play games like CS2 (whose drops come from in-game purchases, while you play) are skipped unless you choose **Try**.

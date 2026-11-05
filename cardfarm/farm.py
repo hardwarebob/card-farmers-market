@@ -19,6 +19,7 @@ UPDATE_EVERY = 6 * 3600
 SKIP_FOR = 12 * 3600
 NO_IDLE_FOR = 7 * 24 * 3600  # a game that never drops while idled (free-to-play ones like CS2) waits this long
 NO_IDLE_AFTER = 6 * 3600     # ...judged after this much idling without a single drop
+TOGETHER_WARN = 2 * 3600     # several games idling together this long without a drop: suggest one at a time
 EXPLAIN_WAIT = 20 * 60  # the badges page shows a drop a minute or two after the inventory does
 OWED_FOR = 2 * 3600     # a drop count no card turned up for is forgotten after this
 
@@ -73,6 +74,7 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
         self._next_items = time.time() + ITEMS_EVERY
         self._soon = False
         self._steam = None
+        self._together_since = None  # see _watch_together
         self._poller = None
         self._qr_svg = (None, None)
         self._wake = threading.Event()
@@ -232,6 +234,7 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
         self._count_idle_time()
         self._check_stalls()
         self._choose_games()  # idling first: the inventory and prices can take a while
+        self._watch_together(dropped)
         if dropped or now >= self._next_inventory:  # read right after fresh badges, to tell drops apart
             self._next_inventory = time.time() + 5 * 60  # if this fails, again in 5 min
             self._check_inventory()  # may ask for a sooner look, for cards the badges don't show yet
@@ -239,12 +242,21 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
                                        time.time() + INVENTORY_EVERY)
         self._price_one_game()
 
+    def _watch_together(self, dropped):
+        """Since when several games have idled together without a single drop: Steam counts their
+        playtime but rarely drops cards that way, so the window suggests one at a time."""
+        if dropped or len(self.state["idling"]) < 2:
+            self._together_since = None
+        elif not self._together_since:
+            self._together_since = time.time()
+
     def _starting(self, what):
         """Say what's going on while nothing is idling yet (the first minutes after starting)."""
         if not self.state["idling"]:
             self.status = what
 
     def _idle_none(self, why):
+        self._together_since = None
         if self.idler.running():
             self.idler.stop_all()
         with self.lock:
@@ -741,6 +753,8 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
                           for g in self._candidates(with_skipped=True)] if self.session.signed_in else [],
                 "kept_games": [{"appid": a, "name": names.get(a, str(a))} for a in sorted(keep)],
                 "drops_left": sum(g["drops"] for g in st["games"]),
+                "together_no_drop": (now - self._together_since if self._together_since
+                                     and now - self._together_since >= TOGETHER_WARN else 0),
                 "review": st["review"], "history": st["history"][:80], "stats": st["stats"],
                 "items": {"inventories": [dict(i, on=i["key"] in self.settings["items_inventories"])
                                           for i in st["items"]["inventories"]],
