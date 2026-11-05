@@ -3,6 +3,7 @@ Card Farmer's Market farms your Steam trading card drops, then sells each card o
 **New in 0.4:**
 - **Stays signed in.** The sign-in now renews itself the way the Steam website does. Before, it stopped working about a day after signing in: drops weren't seen anymore and the games list went stale (games looked like they still had drops).
 - **Start / Stop farming** at the top of the window.
+- **Amounts in cents or dollars:** limits show as 50¢ under a dollar and $5.00 from there on; type either.
 - **Skipping:** a game you skip stays skipped until you unskip it, **Unskip all** brings every game back, and free-to-play games like CS2 (whose drops come from in-game purchases, while you play) are skipped unless you choose **Try**.
 - **Market tab:** your listings next to today's prices, with Reprice (cancel and relist) and Cancel; a 30-day earnings chart, your sales by day and by game, and an optional notice when something sells.
 - **Gems tab:** pack gems into sacks and sell them; booster packs whose market price beats their gem cost, made and listed in one click; booster packs you already have, sold or opened, whichever is worth more.

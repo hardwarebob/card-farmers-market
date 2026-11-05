@@ -857,3 +857,7 @@ def test_free_to_play_games_are_skipped_unless_you_try_them(world, monkeypatch):
     f.update_settings({"skip_free_to_play": False})
     f.state["idle_anyway"] = []
     assert {g["appid"] for g in f._candidates()} == {730, 11}
+
+
+def test_amounts_read_in_cents_under_a_dollar_and_dollars_above():
+    assert market_mod.cents_text(50) == "50¢" and market_mod.cents_text(150) == "$1.50" and market_mod.cents_text(500) == "$5.00"

@@ -112,8 +112,9 @@ button.link:hover:not(:disabled) { background: none; color: var(--signal); }
 .pick button:not(.on):hover { background: none; color: var(--ink); text-decoration: underline; }
 .toggle { min-width: 52px; }
 .toggle.on { background: var(--ink); color: var(--paper); }
-input[type=number] { font: 600 12px/1 var(--mono); color: var(--ink); background: transparent; border: 0;
+input[type=number], input.money { font: 600 12px/1 var(--mono); color: var(--ink); background: transparent; border: 0;
   border-bottom: 1px solid var(--ink); padding: 5px 2px; width: 64px; text-align: right; }
+input.money { width: 76px; }
 input:focus, button:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
 
 /* name lists with a remove mark, and inventory switches */
@@ -271,8 +272,8 @@ td.acts a:hover { color: var(--signal); }
             <span class="pick" data-key="pricing"><button data-v="match">Match lowest</button><button data-v="undercut">Undercut 1¢</button></span></div>
           <div class="line"><span>Foil cards</span>
             <span class="pick" data-key="foils"><button data-v="sell">Sell</button><button data-v="keep">Keep</button></span></div>
-          <div class="line"><span>Gems instead below<small>cents, what a buyer pays</small></span>
-            <input type="number" min="0" data-key="min_sell_cents"></div>
+          <div class="line"><span>Gems instead below<small>what a buyer pays</small></span>
+            <input class="money" inputmode="decimal" title="An amount, like 50¢ or $5" data-key="min_sell_cents"></div>
           <div class="line"><span>Tell me about listings to confirm</span><button class="toggle" data-key="notify"></button></div>
         </div>
         <div>
@@ -304,8 +305,8 @@ td.acts a:hover { color: var(--signal); }
     <section class="settings">
       <div class="head"><h2><i>04</i>Finish sets <span id="sets-count" class="faint"></span></h2>
         <div class="tools"><button id="sets-check">Find sets</button></div></div>
-      <div class="line"><span>Spend at most<small>cents per set, on the cards it's missing</small></span>
-        <input type="number" min="0" data-key="set_budget_cents"></div>
+      <div class="line"><span>Spend at most<small>per set, on the cards it's missing</small></span>
+        <input class="money" inputmode="decimal" title="An amount, like 50¢ or $5" data-key="set_budget_cents"></div>
       <div class="alert" id="sets-progress" hidden></div>
       <div class="line wide" id="finishing-line" hidden><span>Finishing<small>these sets' cards aren't sold or turned into gems until the badge is crafted</small></span>
         <span class="chips" id="finishing"></span></div>
@@ -350,8 +351,8 @@ td.acts a:hover { color: var(--signal); }
             <span class="pick" data-key="pricing"><button data-v="match">Match lowest</button><button data-v="undercut">Undercut 1¢</button></span></div>
         </div>
         <div>
-          <div class="line"><span>Don't list under<small>cents, what a buyer pays</small></span>
-            <input type="number" min="0" data-key="items_min_cents"></div>
+          <div class="line"><span>Don't list under<small>what a buyer pays</small></span>
+            <input class="money" inputmode="decimal" title="An amount, like 50¢ or $5" data-key="items_min_cents"></div>
           <div class="line"><span>Only items that sold at least<small>times in the last 24 hours; 0 any. Prices go by what sold, not only by asks</small></span>
             <input type="number" min="0" data-key="items_min_sales"></div>
         </div>
@@ -411,7 +412,7 @@ td.acts a:hover { color: var(--signal); }
       <div class="sheet">
         <div>
           <div class="line"><span>Reprice listings older than<small>hours</small></span><input type="number" min="0" data-key="reprice_after_hours"></div>
-          <div class="line"><span>Only when beaten by more than<small>cents</small></span><input type="number" min="0" data-key="reprice_gap_cents"></div>
+          <div class="line"><span>Only when beaten by more than</span><input class="money" inputmode="decimal" title="An amount, like 50¢ or $5" data-key="reprice_gap_cents"></div>
         </div>
         <div>
           <div class="line"><span>Cancel unsold after<small>days; 0 never. Cards come back for review</small></span><input type="number" min="0" data-key="cancel_after_days"></div>
@@ -505,7 +506,7 @@ td.acts a:hover { color: var(--signal); }
         <div class="tools"><button id="levelup-check">Find the cheapest way</button><button id="levelup-go" class="go">Level up</button></div></div>
       <div class="sheet">
         <div><div class="line"><span>Reach level<small>0 for the next one</small></span><input type="number" min="0" data-key="levelup_target"></div></div>
-        <div><div class="line"><span>Spend at most<small>cents for the whole plan</small></span><input type="number" min="0" data-key="levelup_budget_cents"></div></div>
+        <div><div class="line"><span>Spend at most<small>for the whole plan</small></span><input class="money" inputmode="decimal" title="An amount, like 50¢ or $5" data-key="levelup_budget_cents"></div></div>
         <div><div class="line"><span>How to buy<small>buy orders cost less but fill over hours or days</small></span>
           <span class="pick" data-key="levelup_buying"><button data-v="now">Now</button><button data-v="orders">Buy orders</button></span></div></div>
         <div><div class="line"><span>Cancel orders unfilled after<small>days; 0 never</small></span><input type="number" min="0" data-key="order_days"></div></div>
@@ -545,6 +546,18 @@ td.acts a:hover { color: var(--signal); }
 <script>
 const $ = s => document.querySelector(s);
 const money = c => c == null ? "–" : (c < 0 ? "−$" : "$") + (Math.abs(c) / 100).toFixed(2);
+// money boxes: cents under a dollar, dollars from there on
+const moneyBox = c => c < 100 ? c + "¢" : money(c);
+function readMoney(text, wasDollars) {
+  const t = text.trim().toLowerCase().replace(/\s+/g, "");
+  let m;
+  if ((m = t.match(/^(\d+)(¢|c|cents?)$/))) return +m[1];
+  if ((m = t.match(/^\$(\d+(?:\.\d{0,2})?|\.\d{1,2})$/)) || (m = t.match(/^(\d*\.\d{1,2})$/))) return Math.round(parseFloat(m[1]) * 100);
+  // a plain number is in the unit the box showed, except 100 and up, which is cents typed from habit
+  // (500 in a box showing $5.00 means $5.00, not $500: these limits spend money)
+  if ((m = t.match(/^(\d+)$/))) return wasDollars && +m[1] < 100 ? +m[1] * 100 : +m[1];
+  return NaN;
+}
 const ago = t => { const m = Math.round((Date.now() / 1000 - t) / 60);
   return m < 1 ? "just now" : m < 60 ? m + " min" : Math.floor(m / 60) + " h " + (m % 60) + " min"; };
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
@@ -587,7 +600,7 @@ function renderSettings(s) {
     const k = el.dataset.key, v = s[k];
     if (el.classList.contains("toggle")) { el.classList.toggle("on", !!v); el.textContent = v ? "On" : "Off"; }
     else if (el.classList.contains("pick")) el.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.v === String(v)));
-    else if (document.activeElement !== el) el.value = v;
+    else if (document.activeElement !== el) el.value = el.classList.contains("money") ? moneyBox(v) : v;
   });
 }
 
@@ -951,6 +964,12 @@ document.addEventListener("click", e => {
 });
 document.addEventListener("change", e => {
   const k = e.target.dataset.key;
+  if (k && e.target.classList.contains("money")) {
+    const v = readMoney(e.target.value, state.settings[k] >= 100);
+    e.target.value = moneyBox(Number.isFinite(v) ? v : state.settings[k]);  // shown in its unit even while focused
+    if (Number.isFinite(v)) setting(k, v);
+    return;
+  }
   if (!k || e.target.type !== "number") return;
   const v = e.target.value.trim() === "" ? NaN : Math.round(+e.target.value);
   if (!Number.isFinite(v) || v < 0) { e.target.value = state.settings[k]; return; }  // a cleared box isn't a 0

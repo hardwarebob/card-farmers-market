@@ -346,9 +346,9 @@ class MarketParts:
     def check_sets(self):
         self._in_background("sets", self._check_sets)
 
-    def _check_sets(self):
+    def _check_sets(self, say=True):
         """Sets you hold part of: what the missing cards cost now, and what your cards of the set
-        would sell for instead."""
+        would sell for instead. Level up checks them quietly (it says what it found itself)."""
         try:
             pending = steam.pending_listings(self.session)  # listed cards can't go into a badge
             cards = [c for c in steam.cards_in_inventory(self.session) if not c["foil"] and c["assetid"] not in pending]
@@ -373,8 +373,9 @@ class MarketParts:
                 self.state["sets"] = {"offers": offers, "checked": time.time()}
             ready = sum(1 for o in offers if not o["missing"])
             cheap = sum(1 for o in offers if o["missing"] and o["cost"] <= self.settings["set_budget_cents"])
-            self.log(f"Card sets checked: {ready} ready to craft, {cheap} you could finish for under "
-                     f"${self.settings['set_budget_cents'] / 100:.2f}")
+            if say:
+                self.log(f"Card sets checked: {ready} ready to craft, {cheap} you could finish within your "
+                         f"Finish sets limit ({cents_text(self.settings['set_budget_cents'])})")
         except Exception as e:
             self.log(f"Couldn't check your card sets: {e}", "warn")
         finally:
@@ -492,7 +493,7 @@ class MarketParts:
         try:
             self.progress["levelup"] = "Reading your level and badges…"
             me = steam.player_badges(self.session)
-            self._check_sets()  # sets you hold part of (logs it if Steam turned it away)
+            self._check_sets(say=False)  # sets you hold part of (logs it if Steam turned it away)
             options, skipped = [], []
             for o in self.state["sets"]["offers"]:
                 if me["badges"].get(o["appid"], 0) < 5 and not o.get("unpriced"):
@@ -591,6 +592,11 @@ class MarketParts:
 
 LEVELUP_PAGES = 15   # the market's 150 cheapest cards
 LEVELUP_GAMES = 25   # sets priced from them, at most
+
+
+def cents_text(c):
+    """An amount as the window's money boxes show it: 50¢ under a dollar, $5.00 from there on."""
+    return f"{c}¢" if c < 100 else f"${c / 100:.2f}"
 
 
 def xp_for_level(level):
