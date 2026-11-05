@@ -80,7 +80,6 @@ def demo(farm):
     st["skipped"] = {"1006": now + 3600}
     st["no_idle"] = {"730": now + 6 * 86400}
     st["skipped_by_you"] = ["1007"]
-    farm._together_since = now - 3 * 3600  # shows the "several games at once" notice
     st["free_to_play"] = {"730": True, "2000": True, **{str(1000 + i): False for i in range(len(names))}}
     st["idled"] = {str(1000 + i): 3600 * (2 + i) for i in range(5)}
     st["farmed"] = {"1000": 3, "1001": 1, "1002": 2}

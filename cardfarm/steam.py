@@ -57,6 +57,14 @@ def badges(session):
     return out
 
 
+def playtime(session):
+    """Minutes played per owned game ({appid: minutes}), from Steam's own record."""
+    q = urllib.parse.urlencode({"access_token": session.access_token, "steamid": session.steamid,
+                                "include_played_free_games": 1, "include_appinfo": 0})
+    games = get_json(f"https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?{q}").get("response", {}).get("games", [])
+    return {g["appid"]: g.get("playtime_forever", 0) for g in games}
+
+
 def free_to_play(appid):
     """Whether the store sells the game as free to play (a game the store no longer lists: False)."""
     d = get_json(f"https://store.steampowered.com/api/appdetails?appids={appid}&filters=basic").get(str(appid)) or {}

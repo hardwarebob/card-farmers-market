@@ -9,6 +9,7 @@ Card Farmer's Market is a desktop app with its own window. It keeps farming in t
 
 - **Native idling.** It tells your running Steam client that a game is playing, the way the game itself would, through Steam's own API library. No Wine, Proton or helper programs.
 - **Start and stop at the top.** One button starts or stops farming; the bar beside it says what's going on.
+- **Playtime first, then one game at a time.** Most games don't drop cards before about 2 hours of playtime, and playtime counts for every running game, so games under 2 hours idle together first (up to 32 at once). After that, games idle one at a time, the order you pick (priciest cards, most drops left, or nearly done), since Steam drops cards for one running game far more readily than for several.
 - **Notices stalls.** It checks your badges page as it goes. A game that stops dropping cards gets restarted, then set aside for a while. Games that never drop while idled are set aside for a week. When Steam restarts, the games are started again.
 - **Skips free-to-play games.** Free-to-play games like Counter-Strike 2 give card drops for in-game purchases, and those come while you play the game yourself, not while it's idled, so they're skipped unless you choose **Try** (or turn the rule off). A game you **Skip** stays skipped until you unskip it; **Unskip all** brings every game back.
 - **Sell or gems, decided per card.** Each card is priced against the market and against its gem value, using the current Sack of Gems price.

@@ -31,8 +31,12 @@ class MarketParts:
         last, self._last_idle_count = getattr(self, "_last_idle_count", now), now
         step = min(now - last, 120)
         with self.lock:
-            for appid in self.state["idling"]:
-                self.state["idled"][appid] = self.state["idled"].get(appid, 0) + step
+            for appid, info in self.state["idling"].items():
+                if info.get("bulk"):  # building playtime: counted toward it, not toward drops
+                    b = self.state.setdefault("bulk", {}).setdefault(appid, {"base": self.state.get("playtime", {}).get(appid, 0), "secs": 0})
+                    b["secs"] += step
+                else:
+                    self.state["idled"][appid] = self.state["idled"].get(appid, 0) + step
 
     def _farmed_one(self, appid):
         with self.lock:

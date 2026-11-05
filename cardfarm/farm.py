@@ -19,7 +19,8 @@ UPDATE_EVERY = 6 * 3600
 SKIP_FOR = 12 * 3600
 NO_IDLE_FOR = 7 * 24 * 3600  # a game that never drops while idled (free-to-play ones like CS2) waits this long
 NO_IDLE_AFTER = 6 * 3600     # ...judged after this much idling without a single drop
-TOGETHER_WARN = 2 * 3600     # several games idling together this long without a drop: suggest one at a time
+BULK_MINUTES = 120           # games played less than this idle together first: most don't drop cards before ~2 h
+BULK_MAX = 32                # ...up to this many at once (Steam's own limit)
 EXPLAIN_WAIT = 20 * 60  # the badges page shows a drop a minute or two after the inventory does
 OWED_FOR = 2 * 3600     # a drop count no card turned up for is forgotten after this
 
@@ -37,6 +38,8 @@ def fresh_state():
             "skipped_by_you": [],  # appids you skipped: left alone until you unskip them
             "free_to_play": {},    # appid -> whether the store calls it free to play (looked up once)
             "idle_anyway": [],     # free-to-play appids you chose to idle all the same
+            "playtime": {},        # appid -> minutes played, from Steam (games with drops only)
+            "bulk": {},            # appid -> {"base": minutes when bulk idling began, "secs": bulk idled since}
             "items": {"inventories": [], "review": [], "seen": {}, "checked": 0},
             **market.market_state()}
 
@@ -74,7 +77,6 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
         self._next_items = time.time() + ITEMS_EVERY
         self._soon = False
         self._steam = None
-        self._together_since = None  # see _watch_together
         self._poller = None
         self._qr_svg = (None, None)
         self._wake = threading.Event()
@@ -231,10 +233,10 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
             dropped = self._refresh_badges()
             self._next_badges = now + BADGES_EVERY
             self._learn_free_games()
+            self._read_playtime()
         self._count_idle_time()
         self._check_stalls()
         self._choose_games()  # idling first: the inventory and prices can take a while
-        self._watch_together(dropped)
         if dropped or now >= self._next_inventory:  # read right after fresh badges, to tell drops apart
             self._next_inventory = time.time() + 5 * 60  # if this fails, again in 5 min
             self._check_inventory()  # may ask for a sooner look, for cards the badges don't show yet
@@ -242,21 +244,12 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
                                        time.time() + INVENTORY_EVERY)
         self._price_one_game()
 
-    def _watch_together(self, dropped):
-        """Since when several games have idled together without a single drop: Steam counts their
-        playtime but rarely drops cards that way, so the window suggests one at a time."""
-        if dropped or len(self.state["idling"]) < 2:
-            self._together_since = None
-        elif not self._together_since:
-            self._together_since = time.time()
-
     def _starting(self, what):
         """Say what's going on while nothing is idling yet (the first minutes after starting)."""
         if not self.state["idling"]:
             self.status = what
 
     def _idle_none(self, why):
-        self._together_since = None
         if self.idler.running():
             self.idler.stop_all()
         with self.lock:
@@ -333,10 +326,41 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
         normal = [c for n, c in (hit or {}).get("v", {}).items() if "(Foil)" not in n]
         return sum(normal) / len(normal) if normal else None
 
+    def _read_playtime(self):
+        try:
+            minutes = steam.playtime(self.session)
+        except Exception as e:  # without it every game counts as past the bulk stage
+            print(f"Playtime check failed: {e}", flush=True)
+            return
+        with self.lock:
+            self.state["playtime"] = {str(g["appid"]): minutes[g["appid"]] for g in self.state["games"]
+                                      if g["drops"] > 0 and g["appid"] in minutes}
+
+    def _played(self, appid):
+        """Minutes of playtime: Steam's record, or more when bulk idling since added to it (Steam
+        updates its record now and then). A game Steam has no record of counts as played enough."""
+        steam_minutes = self.state.get("playtime", {}).get(str(appid))
+        if steam_minutes is None:
+            return float("inf")
+        bulk = self.state.get("bulk", {}).get(str(appid))
+        return max(steam_minutes, bulk["base"] + bulk["secs"] / 60) if bulk else steam_minutes
+
+    def _pick(self):
+        """(appids to idle, whether they're building playtime). Games short of the playtime most
+        games need before they drop cards idle together first, since playtime counts for every
+        running game; then one game at a time, in the "farm first" order, since Steam drops
+        cards for one running game far more readily than for several."""
+        games = self._candidates()
+        with self.lock:
+            young = [g["appid"] for g in games if self._played(g["appid"]) < BULK_MINUTES]
+        if young:
+            return young[:BULK_MAX], True
+        return [g["appid"] for g in games[:1]], False
+
     def _choose_games(self):
         """Idle the games that should be idling. Starting takes a few seconds, so it happens without
         holding the lock (the window keeps reading the state meanwhile)."""
-        want = [g["appid"] for g in self._candidates()[: self.settings["games_at_once"]]]
+        want, bulk = self._pick()
         with self.lock:
             stop = [int(k) for k in self.state["idling"] if int(k) not in want]
             for appid in stop:
@@ -356,11 +380,20 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
                     self.log(f"Steam wouldn't start {self._name(appid)}; skipping it for now", "warn")
                     self.state["skipped"][str(appid)] = now + SKIP_FOR
                     idling.pop(str(appid), None)
-                else:
-                    idling.setdefault(str(appid), {"since": now, "clock": now, "last_drop": None, "restarts": 0})
+                    continue
+                info = idling.setdefault(str(appid), {"since": now, "clock": now, "last_drop": None, "restarts": 0})
+                if info.get("bulk") and not bulk:  # done building playtime: the drop clock starts now
+                    info.update(since=now, clock=now, restarts=0)
+                info["bulk"] = bulk
+                if bulk:
+                    self.state.setdefault("bulk", {}).setdefault(
+                        str(appid), {"base": self.state["playtime"].get(str(appid), 0), "secs": 0})
             names = [self._name(int(a)) for a in idling]
         left = sum(g["drops"] for g in self.state["games"])
-        if names:
+        if names and bulk:
+            self.status = (f"Building playtime: {len(names)} game{'s' * (len(names) > 1)} together until each has "
+                           f"{BULK_MINUTES // 60} h (cards rarely drop before that)")
+        elif names:
             self.status = f"Farming {', '.join(names)}" if len(names) <= 2 else f"Farming {len(names)} games"
         else:
             self.status = "All cards collected" if not left else "Waiting (games with drops are skipped for now)"
@@ -372,7 +405,7 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
         restart, give_up = [], []
         with self.lock:
             for appid, info in list(self.state["idling"].items()):
-                if time.time() - info["clock"] < limit:
+                if info.get("bulk") or time.time() - info["clock"] < limit:
                     continue
                 if info["restarts"] < 1:
                     restart.append(appid)
@@ -742,7 +775,8 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
                 "busy": sorted(self.busy), "progress": dict(self.progress),
                 "settings": self.settings,
                 "idling": [{"appid": int(a), "name": self._name(int(a)), "since": i["since"],
-                            "last_drop": i.get("last_drop")} for a, i in st["idling"].items()],
+                            "last_drop": i.get("last_drop"), "bulk": bool(i.get("bulk")),
+                            "played": min(self._played(int(a)), 10 ** 9)} for a, i in st["idling"].items()],
                 "games": [dict(g, value=self._game_value(g["appid"]), keep=g["appid"] in keep,
                                skipped=st["skipped"].get(str(g["appid"]), 0) > now or str(g["appid"]) in st.get("skipped_by_you", []),
                                skipped_by_you=str(g["appid"]) in st.get("skipped_by_you", []),
@@ -753,8 +787,6 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
                           for g in self._candidates(with_skipped=True)] if self.session.signed_in else [],
                 "kept_games": [{"appid": a, "name": names.get(a, str(a))} for a in sorted(keep)],
                 "drops_left": sum(g["drops"] for g in st["games"]),
-                "together_no_drop": (now - self._together_since if self._together_since
-                                     and now - self._together_since >= TOGETHER_WARN else 0),
                 "review": st["review"], "history": st["history"][:80], "stats": st["stats"],
                 "items": {"inventories": [dict(i, on=i["key"] in self.settings["items_inventories"])
                                           for i in st["items"]["inventories"]],

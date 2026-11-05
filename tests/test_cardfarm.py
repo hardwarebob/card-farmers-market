@@ -52,7 +52,7 @@ def test_undercut_by_a_cent():
 
 def test_settings_are_cleaned():
     assert rules.clean({"sell": "auto", "gems": "maybe", "games_at_once": 99, "bogus": 1,
-                        "never_touch": ["5", 5, 6]}) == {"sell": "auto", "games_at_once": 32, "never_touch": [5, 6]}
+                        "never_touch": ["5", 5, 6]}) == {"sell": "auto", "never_touch": [5, 6]}
     assert rules.clean({"items_inventories": ["730/2", "nope", "440/2"], "items_new": "auto"}) == \
         {"items_inventories": ["440/2", "730/2"], "items_new": "auto"}
 
@@ -863,19 +863,52 @@ def test_amounts_read_in_cents_under_a_dollar_and_dollars_above():
     assert market_mod.cents_text(50) == "50¢" and market_mod.cents_text(150) == "$1.50" and market_mod.cents_text(500) == "$5.00"
 
 
-def test_several_games_without_drops_suggest_one_at_a_time(world, monkeypatch):
+def test_settings_that_are_gone_are_dropped(tmp_path):
+    (tmp_path / "settings.json").write_text(json.dumps({"games_at_once": 32, "bogus": 1, "sell": "off"}))
+    s = rules.load_settings(str(tmp_path / "settings.json"))
+    assert "games_at_once" not in s and "bogus" not in s and s["sell"] == "off"
+
+
+def test_games_short_of_playtime_idle_together_first_then_one_at_a_time(world, monkeypatch):
     f = world["make"]()
-    f.state["idling"] = {"10": {"since": 0}, "11": {"since": 0}}
-    clock = [1000.0]
-    monkeypatch.setattr(farm_mod.time, "time", lambda: clock[0])
-    f._watch_together(False)
-    assert f.snapshot()["together_no_drop"] == 0
-    clock[0] += 2 * 3600
-    f._watch_together(False)
-    assert f.snapshot()["together_no_drop"] == 2 * 3600
-    f._watch_together(True)  # a drop
-    assert f.snapshot()["together_no_drop"] == 0
-    f.state["idling"] = {"10": {"since": 0}}
-    clock[0] += 5 * 3600
-    f._watch_together(False)  # one at a time: no notice
-    assert f.snapshot()["together_no_drop"] == 0
+    f.state["games"] = [{"appid": a, "name": str(a), "drops": 2, "earned": 2} for a in (10, 11, 12, 13)]
+    f.state["playtime"] = {"10": 300, "11": 30, "12": 0, "13": 119}
+    want, bulk = f._pick()
+    assert bulk and set(want) == {11, 12, 13}
+    f._choose_games()
+    assert all(i["bulk"] for i in f.state["idling"].values()) and "Building playtime" in f.status
+    # bulk time counts toward playtime, not toward drops or stalls
+    f._last_idle_count = time.time() - 120
+    f._count_idle_time()
+    assert f.state["bulk"]["13"]["secs"] >= 119 and "13" not in f.state["idled"]
+    f.state["bulk"]["11"]["secs"] = f.state["bulk"]["12"]["secs"] = 2 * 3600
+    for i in f.state["idling"].values():
+        i["clock"] -= 5 * 3600
+    f._check_stalls()
+    assert len(f.state["idling"]) == 3  # nobody restarted or set aside while building playtime
+    # all past 2 h now: one at a time for drops, with a fresh drop clock
+    want, bulk = f._pick()
+    assert not bulk and len(want) == 1
+    f._choose_games()
+    (appid, info), = f.state["idling"].items()
+    assert not info["bulk"] and time.time() - info["clock"] < 60
+
+
+def test_unknown_playtime_counts_as_enough_and_drops_follow_the_farm_first_order(world):
+    f = world["make"]()
+    f.state["games"] = [{"appid": 10, "name": "A", "drops": 2, "earned": 2}, {"appid": 11, "name": "B", "drops": 5, "earned": 5}]
+    f.state["playtime"] = {"10": 0}
+    assert f._pick() == ([10], True)
+    f.state["playtime"] = {}
+    f.update_settings({"order": "most"})
+    assert f._pick() == ([11], False)
+    f.update_settings({"order": "fewest"})
+    assert f._pick() == ([10], False)
+
+
+def test_at_most_32_games_build_playtime_at_once(world):
+    f = world["make"]()
+    f.state["games"] = [{"appid": a, "name": str(a), "drops": 1, "earned": 1} for a in range(100, 140)]
+    f.state["playtime"] = {str(a): 0 for a in range(100, 140)}
+    want, bulk = f._pick()
+    assert bulk and len(want) == 32

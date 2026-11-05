@@ -5,7 +5,6 @@ import re
 
 DEFAULTS = {
     "farming": True,
-    "games_at_once": 1,          # Steam counts playtime for several, but drops come fastest one at a time
     "order": "value",            # value: priciest cards first | most: most drops left | fewest: closest to done
     "pause_when_playing": True,  # step aside while you play something yourself
     "stall_minutes": 90,         # no drop for this long: restart the idler, then move on (0: never)
@@ -42,7 +41,7 @@ def load_settings(path):
     s = dict(DEFAULTS)
     if os.path.exists(path):
         with open(path) as f:
-            s.update({k: v for k, v in json.load(f).items() if k in DEFAULTS})
+            s.update(clean(json.load(f)))  # settings that are gone (games_at_once) are dropped
     return s
 
 
@@ -55,8 +54,6 @@ def clean(patch):
         d = DEFAULTS[k]
         if isinstance(d, bool):
             out[k] = bool(v)
-        elif k == "games_at_once":
-            out[k] = max(1, min(32, int(v)))
         elif k in ("stall_minutes", "min_sell_cents", "items_min_cents", "reprice_after_hours", "reprice_gap_cents",
                    "cancel_after_days", "set_budget_cents", "booster_min_sales", "items_min_sales", "levelup_target",
                    "levelup_budget_cents", "order_days"):

@@ -233,7 +233,6 @@ td.acts a:hover { color: var(--signal); }
   <div id="app" hidden>
     <div class="ticker" id="ticker"><span class="label" id="ticker-label">NOW</span><span class="text" id="status">…</span><button id="farm-toggle" class="farm"></button></div>
     <div class="alert" id="error" hidden></div>
-    <div class="alert" id="together" hidden><span id="together-text"></span> <button class="link" id="together-one">Switch to 1</button></div>
 
     <div id="tab-panel-cards">
     <section>
@@ -280,18 +279,16 @@ td.acts a:hover { color: var(--signal); }
             <span class="pick" data-key="foils"><button data-v="sell">Sell</button><button data-v="keep">Keep</button></span></div>
           <div class="line"><span>Gems instead below<small>what a buyer pays</small></span>
             <input class="money" inputmode="decimal" title="An amount, like 50¢ or $5" data-key="min_sell_cents"></div>
-          <div class="line"><span>Tell me about listings to confirm</span><button class="toggle" data-key="notify"></button></div>
         </div>
         <div>
           <div class="line"><span>Pause while I play</span><button class="toggle" data-key="pause_when_playing"></button></div>
-          <div class="line"><span>Farm first</span>
+          <div class="line"><span>Farm first<small>one game at a time; games under 2 h of playtime idle together first</small></span>
             <span class="pick" data-key="order"><button data-v="value">Priciest</button><button data-v="most">Most left</button><button data-v="fewest">Nearly done</button></span></div>
-          <div class="line"><span>Games at once<small>1 drops cards fastest; more only adds playtime</small></span>
-            <span class="pick" data-key="games_at_once"><button data-v="1">1</button><button data-v="2">2</button><button data-v="4">4</button><button data-v="8">8</button><button data-v="32">32</button></span></div>
           <div class="line"><span>Restart a game after<small>minutes without a drop; 0 never</small></span>
             <input type="number" min="0" data-key="stall_minutes"></div>
           <div class="line"><span>Skip free-to-play games<small>like CS2: they drop cards while you play, not idled</small></span>
             <button class="toggle" data-key="skip_free_to_play"></button></div>
+          <div class="line"><span>Tell me about listings to confirm</span><button class="toggle" data-key="notify"></button></div>
         </div>
         <div class="line wide"><span>Keep every card from<small>for sets you're crafting; mark games below</small></span>
           <span class="chips" id="kept-games"></span></div>
@@ -900,11 +897,12 @@ function render(s) {
   $("#farm-toggle").textContent = on ? "Stop farming" : "Start farming";
   $("#farm-toggle").classList.toggle("start", !on);
   $("#status").textContent = (s.status === "starting" ? "Starting…" : s.status) + (s.working ? `  ·  ${s.working} to list or turn into gems` : "");
-  fill($("#now"), s.idling.map(i => `${esc(i.name)} — on it ${ago(i.since)}, ${i.last_drop ? "last drop " + ago(i.last_drop) + " ago" : "no drop yet"}`).join("<br>"));
-  $("#together").hidden = !s.together_no_drop;
-  $("#together-text").textContent = s.together_no_drop ? `No card drops in ${hours(s.together_no_drop)} with ${s.idling.length} games `
-    + "idling at once. Steam counts their playtime, but it rarely drops cards while several games run together; "
-    + "one at a time drops about one every 20–40 minutes." : "";
+  const building = s.idling.filter(i => i.bulk), dropping = s.idling.filter(i => !i.bulk);
+  fill($("#now"), [
+    ...dropping.map(i => `${esc(i.name)} — on it ${ago(i.since)}, ${i.last_drop ? "last drop " + ago(i.last_drop) + " ago" : "no drop yet"}`),
+    ...(building.length ? [`Building playtime (until 2 h each): `
+      + building.slice().sort((a, b) => b.played - a.played).slice(0, 6).map(i => `${esc(i.name)} ${hours(i.played * 60)}`).join(", ")
+      + (building.length > 6 ? `, +${building.length - 6} more` : "")] : [])].join("<br>"));
   $("#error").hidden = !s.error;
   $("#error").textContent = s.error ? "Problem: " + s.error : "";
   $("#s-left").textContent = s.drops_left;
@@ -944,7 +942,7 @@ document.addEventListener("click", e => {
   if (t.classList.contains("toggle")) return setting(d.key, !t.classList.contains("on"));
   const pick = t.closest(".pick");
   if (pick) {
-    const k = pick.dataset.key, v = k === "games_at_once" ? +d.v : d.v;
+    const k = pick.dataset.key, v = d.v;
     if (k === "items_new" && v === "auto" && s.items_new !== "auto"
         && !confirm("List new items automatically as they turn up in the inventories you switched on? Items already there stay put.")) return;
     return setting(k, v);
@@ -993,7 +991,6 @@ $("#quit").onclick = () => confirm("Quit Card Farmer's Market? Farming stops unt
 $("#signout").onclick = () => confirm("Sign out of Steam? Farming stops.") && post("/api/sign-out");
 $("#refresh").onclick = () => post("/api/refresh");
 $("#unskip-all").onclick = () => post("/api/unskip", {appid: "all"});
-$("#together-one").onclick = () => setting("games_at_once", 1);
 $("#farm-toggle").onclick = () => setting("farming", !state.settings.farming);
 $("#review-existing").onclick = () => post("/api/review-existing");
 $("#check-items").onclick = () => post("/api/items/check");
