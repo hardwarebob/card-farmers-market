@@ -68,9 +68,10 @@ def ensure_running(data_dir):
     raise RuntimeError('Card Farm service did not start; see service.log')
 
 def _register_frontend(data_dir):
-    """Record the desktop frontend PID so service updates can wait for it to close."""
-    os.makedirs(data_dir, exist_ok=True)
-    path = os.path.join(data_dir, "frontend.pid")
+    """Record this UI process so a service update can wait for every local frontend."""
+    folder = os.path.join(data_dir, "frontends")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, f"{os.getpid()}.json")
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
         json.dump({"pid": os.getpid(), "identity": _process_identity(os.getpid())}, f)
@@ -79,28 +80,48 @@ def _register_frontend(data_dir):
 
 def clear_frontend(data_dir):
     """Remove our frontend marker on normal exit so later updates cannot wait on a stale PID."""
-    path = os.path.join(data_dir, "frontend.pid")
-    try:
-        with open(path) as f:
-            current = json.load(f)
-        if current.get("pid") == os.getpid():
-            os.unlink(path)
-    except (OSError, ValueError, AttributeError):
-        pass
+    identity = _process_identity(os.getpid())
+    paths = [os.path.join(data_dir, "frontends", f"{os.getpid()}.json"),
+             os.path.join(data_dir, "frontend.pid")]  # legacy single-frontend marker
+    for path in paths:
+        try:
+            with open(path) as f:
+                current = json.load(f)
+            if current.get("pid") == os.getpid() and current.get("identity") == identity:
+                os.unlink(path)
+        except (OSError, ValueError, AttributeError):
+            pass
 
 
-def frontend_pid(data_dir):
-    """Return the recorded frontend PID only if it still belongs to that exact process."""
-    path = os.path.join(data_dir, "frontend.pid")
+def frontend_pids(data_dir):
+    """Return live frontend PIDs, ignoring stale markers and entries for this service process."""
+    folder = os.path.join(data_dir, "frontends")
+    found = set()
     try:
-        with open(path) as f:
+        names = os.listdir(folder)
+    except OSError:
+        names = []
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(folder, name)) as f:
+                entry = json.load(f)
+            pid, identity = int(entry["pid"]), entry["identity"]
+            if pid != os.getpid() and identity and identity == _process_identity(pid):
+                found.add(pid)
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    # Read the exact-identity marker written by the previous release during upgrades.
+    try:
+        with open(os.path.join(data_dir, "frontend.pid")) as f:
             entry = json.load(f)
         pid, identity = int(entry["pid"]), entry["identity"]
         if pid != os.getpid() and identity and identity == _process_identity(pid):
-            return pid
+            found.add(pid)
     except (OSError, ValueError, KeyError, TypeError):
         pass
-    return None
+    return sorted(found)
 
 
 def _process_identity(pid):

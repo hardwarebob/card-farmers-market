@@ -9,7 +9,8 @@ description = "Card Farmer's Market: farm Steam trading cards on Linux, Windows 
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
-dependencies = ["pywebview>=5; sys_platform != 'linux'", "pystray>=0.19.5", "Pillow>=10"]
+dependencies = ["pywebview>=5; sys_platform != 'linux'", "pystray>=0.19.5", "Pillow>=10",
+                "windows-curses>=2.4; sys_platform == 'win32'"]
 
 [project.scripts]
 card-farm = "cardfarm.__main__:main"

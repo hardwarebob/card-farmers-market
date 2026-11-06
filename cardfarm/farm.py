@@ -880,11 +880,8 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
             path = update.fetch(self.update)
             self.idler.stop_all()
             self.save()
-            from .service import frontend_pid
-            wait_for = [os.getpid()]
-            frontend = frontend_pid(self.data)
-            if frontend:
-                wait_for.append(frontend)
+            from .service import frontend_pids
+            wait_for = [os.getpid(), *frontend_pids(self.data)]
             update.install(path, wait_for=wait_for)
             self.log(f"Installing {self.update['version']}; it reopens in a moment")
             self.save()

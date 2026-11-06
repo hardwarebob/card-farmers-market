@@ -76,6 +76,8 @@ You can also run the service separately, for example under systemd or another pr
 card-farm --service
 ```
 
+For a terminal dashboard and controls, run `card-farm --tui`. It starts or connects to the same service and provides Overview, Cards, and Activity pages. Use `1`–`3` to switch pages, `f` to toggle farming, `j`/`k` to select cards, `s`/`g`/`h` to sell, gem, or keep a selected card, `o` to open the web interface, and `q` to exit the TUI. Press `Q` and confirm with `y` to stop the service.
+
 It serves the same interface and API at `http://127.0.0.1:8765` by default. Set `CARD_FARM_HOST` and `CARD_FARM_PORT`, or pass `--host` and `--port`, to choose another bind address. The desktop frontend connects to `CARD_FARM_URL` when set; otherwise it starts/uses the default local service. Binding beyond localhost exposes a powerful, unauthenticated interface. Put authentication and TLS in a reverse proxy or restrict access to a trusted VPN/private network.
 
 ### Linux requirements
@@ -147,6 +149,7 @@ python3 -m venv .venv && .venv/bin/pip install pytest
 .venv/bin/python -m pytest tests
 python3 -m cardfarm                # window
 python3 -m cardfarm --background   # farm without opening the window
+python3 -m cardfarm --tui          # terminal interface
 python packaging/build.py linux    # dist/card-farm.pyz; windows / macos need: pip install pyinstaller pywebview pillow
 ```
 

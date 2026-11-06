@@ -47,6 +47,12 @@ def main():
         args = parser.parse_args(sys.argv[1:])
         from .service import serve
         return serve(lambda: Farm(data), args.host, args.port)
+    if "--tui" in sys.argv:
+        from .tui import run_tui
+        try:
+            return run_tui(data)
+        except RuntimeError as e:
+            sys.exit(str(e))
     if sys.platform.startswith("linux"):
         try:
             from .app import run_window

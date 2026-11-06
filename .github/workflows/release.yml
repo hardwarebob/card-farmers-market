@@ -46,7 +46,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: echo "VERSION = \"$GITHUB_REF_NAME\"" > cardfarm/_version.py
-      - run: pip install pytest pyinstaller pywebview pystray pillow
+      - run: pip install pytest pyinstaller pywebview pystray pillow windows-curses
       - run: python -m pytest tests -q
       - run: python packaging/build.py windows
       # Card Farm.exe itself stays unmarked: a marked exe gets SmartScreen's "unknown publisher"
