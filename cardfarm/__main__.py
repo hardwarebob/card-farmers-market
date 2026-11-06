@@ -37,7 +37,12 @@ def main():
         return child(sys.argv[2])
     data = data_dir()
     background = "--background" in sys.argv
-    from .farm import Farm
+    if "--tui" in sys.argv:
+        from .tui import run_tui
+        try:
+            return run_tui(data)
+        except RuntimeError as e:
+            sys.exit(str(e))
     if "--service" in sys.argv:
         import argparse
         parser = argparse.ArgumentParser(prog="card-farm --service")
@@ -45,14 +50,10 @@ def main():
         parser.add_argument("--host", default=os.environ.get("CARD_FARM_HOST", "127.0.0.1"))
         parser.add_argument("--port", type=int, default=int(os.environ.get("CARD_FARM_PORT", "8765")))
         args = parser.parse_args(sys.argv[1:])
+        from .farm import Farm
         from .service import serve
         return serve(lambda: Farm(data), args.host, args.port)
-    if "--tui" in sys.argv:
-        from .tui import run_tui
-        try:
-            return run_tui(data)
-        except RuntimeError as e:
-            sys.exit(str(e))
+    from .farm import Farm
     if sys.platform.startswith("linux"):
         try:
             from .app import run_window
