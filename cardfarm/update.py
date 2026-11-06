@@ -108,9 +108,9 @@ def fetch(offer):
 
 
 WINDOWS_HELPER = r"""
-param([int]$Wait, [string]$Zip, [string]$Target, [string]$Start)
+param([string]$Wait, [string]$Zip, [string]$Target, [string]$Start)
 Start-Transcript -Path (Join-Path (Split-Path $Zip) "update.log") | Out-Null
-Wait-Process -Id $Wait -ErrorAction SilentlyContinue
+foreach ($PidToWait in ($Wait -split ',')) { Wait-Process -Id ([int]$PidToWait) -ErrorAction SilentlyContinue }
 Start-Sleep -Seconds 1
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ("card-farm-new-" + [guid]::NewGuid())
 Expand-Archive -LiteralPath $Zip -DestinationPath $tmp -Force
@@ -130,7 +130,9 @@ Stop-Transcript | Out-Null
 """
 
 POSIX_HELPER = r"""
-while kill -0 "$1" 2>/dev/null; do sleep 1; done
+for pid in $(echo "$1" | tr ',' ' '); do
+  while kill -0 "$pid" 2>/dev/null; do sleep 1; done
+done
 case "$2" in
   macos)
     # the download holds one app ("Card Farmer's Market.app" now, "Card Farm.app" before); it goes where
@@ -153,7 +155,8 @@ def install(path, relaunch=True, wait_for=None, target=None):
     exits; then Card Farm should quit. target is where the app lives (found when not given)."""
     kind = install_kind() if target is None else ("windows" if sys.platform == "win32" else
                                                   "macos" if sys.platform == "darwin" else "pyz")
-    pid = str(wait_for or os.getpid())
+    pids = wait_for if isinstance(wait_for, (list, tuple, set)) else [wait_for or os.getpid()]
+    pid = ",".join(str(p) for p in pids)
     if kind == "windows":
         target = target or os.path.dirname(sys.executable)
         script = os.path.join(os.path.dirname(path), "update.ps1")

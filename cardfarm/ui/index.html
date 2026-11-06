@@ -59,7 +59,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 26px 20px 64px; }
 /* the turf: tabs and account on top, what the farm is doing below, grass (and flowers) along the top edge */
 .mast, .ticker { background: linear-gradient(var(--turf-top), var(--turf-bottom)); color: var(--turf-ink); }
 .mast { position: relative; display: flex; align-items: center; gap: 14px; padding: 6px 14px 0; border-radius: 12px 12px 0 0; flex-wrap: wrap; }
-.mast::before { content: ""; position: absolute; left: 0; right: 0; top: -15px; height: 18px; pointer-events: none;
+.mast::before { content: ""; position: absolute; left: 0; right: 0; top: -27px; height: 30px; pointer-events: none;
   background: var(--grass) repeat-x bottom left / 180px 18px; }
 .mast .who, .mast .ver { font-size: 12px; color: var(--turf-ink); opacity: .8; }
 .mast .who { margin-left: auto; }
@@ -262,7 +262,7 @@ td.acts a:hover { color: var(--ink); text-decoration: underline; }
     <a id="update-link" class="small" target="_blank" rel="noopener" hidden></a>
     <a class="support" href="https://ko-fi.com/m4ybe" target="_blank" rel="noopener" title="Card Farmer's Market is free; tips help keep it going">Support on Ko-fi</a>
     <button id="signout" class="link" hidden>Sign out</button>
-    <button id="quit" class="link" hidden title="Stop farming and close the app">Quit</button>
+    <button id="quit" class="link" title="Stop the Card Farm service">Stop service</button>
   </div>
 
   <div id="signin" class="gate" hidden>
@@ -707,16 +707,16 @@ function renderReview(list) {
   $("#review-head").hidden = !list.length;
   fill($("#review"), !list.length ? `<tr><td colspan="7" class="empty">Nothing waiting. Cards land here when a rule says Review.</td></tr>`
     : list.map(e => {
-    const c = e.card, d = e.detail;
+    const c = e.card, d = e.detail || {}, queued = e.pricing === "queued";
     return `<tr>
       <td class="pic" style="width:42px">${art(c.icon)}</td>
       <td class="cardname"><b>${esc(c.name)}</b>${c.foil ? '<span class="foil">foil</span>' : ""}<span class="faint">${esc(c.game)}</span></td>
-      <td class="r num">${d.buyer ? money(d.buyer) : '<span class="faint">none</span>'}</td>
-      <td class="r num hide-sm">${d.buyer ? money(d.receive) : "–"}</td>
-      <td class="r num hide-sm">${d.gems || 0}</td>
-      <td class="pl"><span class="verdict ${e.action}">${e.action === "sell" ? "Sell" : "Gems"}</span></td>
+      <td class="r num">${queued ? '<span class="faint">Queued</span>' : d.buyer ? money(d.buyer) : '<span class="faint">none</span>'}</td>
+      <td class="r num hide-sm">${queued ? "–" : d.buyer ? money(d.receive) : "–"}</td>
+      <td class="r num hide-sm">${queued ? "–" : d.gems || 0}</td>
+      <td class="pl"><span class="verdict ${queued ? "" : e.action}">${queued ? "Pricing queued" : e.action === "sell" ? "Sell" : "Gems"}</span></td>
       <td class="acts">
-        <button data-id="${esc(e.id)}" data-a="sell" ${d.buyer ? "" : "disabled"}>Sell</button><button data-id="${esc(e.id)}" data-a="gems" ${d.gems ? "" : "disabled"}>Gems</button><button data-id="${esc(e.id)}" data-a="keep">Keep</button>
+        <button data-id="${esc(e.id)}" data-a="sell" ${queued || !d.buyer ? "disabled" : ""}>Sell</button><button data-id="${esc(e.id)}" data-a="gems" ${queued || !d.gems ? "disabled" : ""}>Gems</button><button data-id="${esc(e.id)}" data-a="keep" ${queued ? "disabled" : ""}>Keep</button>
       </td></tr>`;
   }).join(""));
 }
@@ -1075,8 +1075,8 @@ document.addEventListener("change", e => {
 $("#start-signin").onclick = () => post("/api/sign-in");
 $("#update").onclick = () => confirm(`Update Card Farmer's Market to ${state.update.version.replace(/^v/, "")}? It closes, updates and opens `
   + "again in a moment. Your settings and sign-in stay.") && post("/api/update");
-$("#quit").hidden = !BRIDGE;
-$("#quit").onclick = () => confirm("Quit Card Farmer's Market? Farming stops until you open it again.") && call("POST", "/api/quit");
+
+$("#quit").onclick = () => confirm("Stop the Card Farm service? Farming stops until the service is started again.") && call("POST", "/api/quit");
 $("#signout").onclick = () => confirm("Sign out of Steam? Farming stops.") && post("/api/sign-out");
 $("#refresh").onclick = () => post("/api/refresh");
 $("#unskip-all").onclick = () => post("/api/unskip", {appid: "all"});

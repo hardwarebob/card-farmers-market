@@ -10,7 +10,7 @@ import traceback
 
 from . import market, qr, rules, steam, update
 from .auth import Session
-from .idler import Idler, game_you_are_playing, steam_pid
+from .idler import Idler, game_you_are_playing, steam_pid, start_steam
 
 BADGES_EVERY = 10 * 60
 INVENTORY_EVERY = 30 * 60
@@ -62,6 +62,10 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
             self.state.update(saved)
             self.state["stats"] = dict(fresh_state()["stats"], **saved.get("stats", {}))
             self.state["items"] = dict(fresh_state()["items"], **saved.get("items", {}))
+            # Older saves tracked drops per game but predate the garden's total drop counter.
+            earned = sum(max(0, int(g.get("earned", 0)) - int(g.get("drops", 0)))
+                         for g in self.state.get("games", []))
+            self.state["stats"]["drops"] = max(self.state["stats"]["drops"], earned)
         self.state["idling"] = {}  # the idlers went away with the last run
         if self.session.signed_in:
             self._for_account()
@@ -69,6 +73,7 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
         self.error = None
         self.signin_error = None
         self.busy = set()  # long jobs running for the page: "cards", "items", "listings", ...
+        self.pricing_cards = {}  # transient review rows shown while their market prices are fetched
         self.progress = {}  # job -> what it's doing, for the page
         self._next_sales = self._next_listings = self._next_orders = 0
         self.notify = _notify
@@ -78,6 +83,7 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
         self._next_items = time.time() + ITEMS_EVERY
         self._soon = False
         self._steam = None
+        self._steam_launch_after = 0
         self._poller = None
         self._qr_svg = (None, None)
         self._wake = threading.Event()
@@ -196,6 +202,17 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
                 self.update = update.check()
             except Exception as e:
                 print(f"Update check failed: {e}", flush=True)
+        pid = steam_pid()
+        if not pid and time.time() >= self._steam_launch_after:
+            self._steam_launch_after = time.time() + 60
+            try:
+                started = start_steam()
+                self._starting("Starting Steam…" if not started else "Waiting for Steam to start")
+                if not started:
+                    self.log("Started the Steam client")
+            except Exception as e:
+                self.error = f"Couldn't start Steam: {e}"
+                self._starting("Waiting for Steam to start")
         if not self.session.signed_in:
             return self._idle_none("Sign in to start")
         if s["items_new"] != "off" and time.time() >= self._next_items:
@@ -220,7 +237,7 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
             return self._idle_none("Stopped")
         pid = steam_pid()
         if not pid:
-            return self._idle_none("Waiting for Steam to start")
+            return self._idle_none("Starting Steam…" if time.time() < self._steam_launch_after else "Waiting for Steam to start")
         if self._steam and pid != self._steam and self.idler.running():
             self.log("Steam restarted; starting the games again")
             self._idle_none("Steam restarted")
@@ -374,12 +391,22 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
             self._starting("Starting games…")
         failed = self.idler.start(want)
         now = time.time()
+        client_signed_out = any("connect to global user failed" in failure.get("detail", "").lower()
+                                for failure in failed.values())
+        if client_signed_out:
+            self.error = "Steam is running but signed out. Sign in to the Steam desktop client to idle games."
         with self.lock:
             idling = self.state["idling"]  # keyed by str(appid), like everything saved as JSON
             for appid in want:
                 if appid in failed:
-                    self.log(f"Steam wouldn't start {self._name(appid)}; skipping it for now", "warn")
-                    self.state["skipped"][str(appid)] = now + SKIP_FOR
+                    failure = failed[appid]
+                    detail = failure.get("detail") or f"idler exited with code {failure.get('code')}"
+                    if client_signed_out:
+                        if appid == next(iter(failed)):
+                            self.log(f"Steam client isn't signed in: {detail}", "warn")
+                    else:
+                        self.log(f"Steam wouldn't start {self._name(appid)}: {detail}; skipping it for now", "warn")
+                        self.state["skipped"][str(appid)] = now + SKIP_FOR
                     idling.pop(str(appid), None)
                     continue
                 info = idling.setdefault(str(appid), {"since": now, "clock": now, "last_drop": None, "restarts": 0})
@@ -391,6 +418,9 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
                         str(appid), {"base": self.state["playtime"].get(str(appid), 0), "secs": 0})
             names = [self._name(int(a)) for a in idling]
         left = sum(g["drops"] for g in self.state["games"])
+        if client_signed_out:
+            self.status = "Sign in to the Steam desktop client"
+            return
         if names and bulk:
             self.status = (f"Building playtime: {len(names)} game{'s' * (len(names) > 1)} together until each has "
                            f"{BULK_MINUTES // 60} h (cards rarely drop before that)")
@@ -460,6 +490,7 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
         if self.state["review"]:
             self._drop_pending_from_review()
         handled, now = set(), time.time()
+        ready = []
         for card in new:
             key = str(card["appid"])
             with self.lock:
@@ -475,11 +506,24 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
                 self._soon = True
                 self._next_inventory = now + 3 * 60
                 continue
+            ready.append((card, owed))
+        # Show the whole batch as queued before the first market lookup starts.
+        with self.lock:
+            for card, _ in ready:
+                self.pricing_cards[card["assetid"]] = {
+                    "id": card["assetid"], "kind": "card", "card": card,
+                    "action": "pricing", "detail": {}, "pricing": "queued", "at": time.time()
+                }
+        for card, owed in ready:
+            key = str(card["appid"])
             try:
                 self.handle(card, "drop" if owed else "new")
             except Exception as e:  # stays unseen, so the next check tries again
                 self.log(f"Couldn't price {card['name']} ({card['game']}): {e}", "warn")
                 continue
+            finally:
+                with self.lock:
+                    self.pricing_cards.pop(card["assetid"], None)
             handled.add(card["assetid"])
             with self.lock:
                 self.state["unexplained"].pop(card["assetid"], None)
@@ -568,7 +612,7 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
 
     def _queued_ids(self):
         with self.lock:
-            return ({e["id"] for e in self.state["review"]} | {e["id"] for e in self.state["items"]["review"]}
+            return ({e["id"] for e in self.state["review"]} | set(self.pricing_cards) | {e["id"] for e in self.state["items"]["review"]}
                     | {j["entry"]["id"] for j in self.state["queue"]} | set(self.state["kept"]))
 
     def _review_existing(self):
@@ -576,10 +620,20 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
             pending = self._drop_pending_from_review()
             skip = self._queued_ids() | pending
             cards = [c for c in steam.cards_in_inventory(self.session) if c["assetid"] not in skip]
-            self.log(f"Pricing {len(cards)} cards you already have; Steam allows about 20 price lookups a "
-                     "minute, so this can take a few minutes…")
+            with self.lock:
+                self.pricing_cards.update({c["assetid"]: {"id": c["assetid"], "kind": "card", "card": c,
+                                           "action": "pricing", "detail": {}, "pricing": "queued", "at": time.time()}
+                                           for c in cards})
+            self.log(f"Pricing {len(cards)} cards you already have; they are listed as queued while Steam's "
+                     "market prices load")
             for c in cards:
-                self.handle(c, "existing")
+                try:
+                    self.handle(c, "existing")
+                except Exception as e:
+                    self.log(f"Couldn't price {c['name']} ({c['game']}): {e}", "warn")
+                finally:
+                    with self.lock:
+                        self.pricing_cards.pop(c["assetid"], None)
             self.log(f"Review list ready: {len(self.state['review'])} cards")
         except Exception as e:
             self.log(f"Couldn't review your cards: {e}", "warn")
@@ -792,7 +846,8 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
                           for g in self._candidates(with_skipped=True)] if self.session.signed_in else [],
                 "kept_games": [{"appid": a, "name": names.get(a, str(a))} for a in sorted(keep)],
                 "drops_left": sum(g["drops"] for g in st["games"]),
-                "review": st["review"], "history": st["history"][:80], "stats": st["stats"],
+                "review": st["review"] + list(self.pricing_cards.values()),
+                "history": st["history"][:80], "stats": st["stats"],
                 "items": {"inventories": [dict(i, on=i["key"] in self.settings["items_inventories"])
                                           for i in st["items"]["inventories"]],
                           "review": st["items"]["review"], "checked": st["items"]["checked"]},
@@ -825,7 +880,12 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
             path = update.fetch(self.update)
             self.idler.stop_all()
             self.save()
-            update.install(path)
+            from .service import frontend_pid
+            wait_for = [os.getpid()]
+            frontend = frontend_pid(self.data)
+            if frontend:
+                wait_for.append(frontend)
+            update.install(path, wait_for=wait_for)
             self.log(f"Installing {self.update['version']}; it reopens in a moment")
             self.save()
             if self.on_quit:

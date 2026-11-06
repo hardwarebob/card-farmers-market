@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import tempfile
 import time
 
 WINDOWS, MAC = sys.platform == "win32", sys.platform == "darwin"
@@ -20,12 +21,20 @@ LINUX_STEAM = ["~/.local/share/Steam", "~/.steam/steam", "~/.var/app/com.valveso
 def child(library):
     """Body of one idler process (Card Farm runs itself with --idle-child LIB, SteamAppId set in
     its environment). It stays until Card Farm closes its stdin, on purpose or by going away."""
+    appid = os.environ.get("SteamAppId", "unknown")
     try:
         steam = ctypes.CDLL(library)
-    except OSError:
+    except OSError as e:
+        print(f"AppId {appid}: couldn't load {library}: {e}", file=sys.stderr, flush=True)
         sys.exit(2)
     steam.SteamAPI_Init.restype = ctypes.c_bool  # a C++ bool: only the low byte means anything
-    if not steam.SteamAPI_Init():
+    try:
+        initialized = steam.SteamAPI_Init()
+    except Exception as e:
+        print(f"AppId {appid}: SteamAPI_Init raised {e!r}", file=sys.stderr, flush=True)
+        sys.exit(3)
+    if not initialized:
+        print(f"AppId {appid}: SteamAPI_Init returned false", file=sys.stderr, flush=True)
         sys.exit(3)
     gone = threading.Event()
     stdin = sys.stdin.buffer if sys.stdin else open(0, "rb", closefd=False)
@@ -170,6 +179,53 @@ def steam_pid():
     return _pgrep("-o", "-x", "steam") or _pgrep("-o", "-f", "steamrt64/steam")
 
 
+def _steam_environment():
+    """Use the logged-in desktop session when a background service lacks its GUI environment."""
+    env = os.environ.copy()
+    if not WINDOWS and not MAC and not (env.get("DISPLAY") or env.get("WAYLAND_DISPLAY")):
+        try:
+            result = subprocess.run(["systemctl", "--user", "show-environment"], capture_output=True,
+                                    text=True, timeout=3, check=True)
+            inherited = {"DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "XDG_SESSION_TYPE",
+                         "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"}
+            for line in result.stdout.splitlines():
+                key, sep, value = line.partition("=")
+                if sep and key in inherited and value:
+                    env[key] = value
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return env
+
+
+def start_steam():
+    """Launch the installed Steam client in the logged-in user's desktop session."""
+    if steam_pid():
+        return True
+    env = _steam_environment()
+    if not WINDOWS and not MAC and not (env.get("DISPLAY") or env.get("WAYLAND_DISPLAY")):
+        raise RuntimeError("no graphical desktop session is available to open Steam")
+    if WINDOWS:
+        path = _registry("SteamExe") or os.path.join(_registry("SteamPath") or r"C:\Program Files (x86)\Steam", "steam.exe")
+        command = [path]
+    elif MAC:
+        command = ["open", "-a", "Steam"]
+    else:
+        executable = shutil.which("steam")
+        if executable:
+            command = [executable]
+        elif shutil.which("flatpak") and subprocess.run(["flatpak", "info", "com.valvesoftware.Steam"],
+                                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+            command = [shutil.which("flatpak"), "run", "com.valvesoftware.Steam"]
+        else:
+            fallback = os.path.join(steam_root(), "steam.sh")
+            if not os.path.isfile(fallback):
+                raise FileNotFoundError("Steam isn't installed or its launcher isn't on PATH")
+            command = [fallback]
+    subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, env=env, **QUIET)
+    return False
+
+
 def installed_games():
     """{install folder name: appid} from the app manifests of every library."""
     out = {}
@@ -210,34 +266,48 @@ class Idler:
         self.data_dir = data_dir
         self.library = None
         self.procs = {}  # appid -> Popen
+        self.logs = {}  # appid -> temporary stderr capture for its child
 
     def running(self):
         for appid, p in list(self.procs.items()):
             if p.poll() is not None:
                 del self.procs[appid]
+                log = self.logs.pop(appid, None)
+                if log:
+                    log.close()
         return set(self.procs)
 
     def start(self, appids):
         """Start these games together; returns the ones Steam wouldn't take."""
         appids = [a for a in appids if a not in self.running()]
         if not appids:
-            return set()
+            return {}
         self.library = self.library or find_library(self.data_dir)
         started = {}
         for appid in appids:
-            env = dict(os.environ, SteamAppId=str(appid), SteamGameId=str(appid))
-            started[appid] = subprocess.Popen(child_command(self.library), env=env, stdin=subprocess.PIPE,
-                                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **QUIET)
+            env = _steam_environment()
+            env.update(SteamAppId=str(appid), SteamGameId=str(appid))
+            log = tempfile.TemporaryFile(mode="w+b")
+            p = subprocess.Popen(child_command(self.library), env=env, stdin=subprocess.PIPE,
+                                 stdout=subprocess.DEVNULL, stderr=log, **QUIET)
+            started[appid] = (p, log)
         time.sleep(3)  # SteamAPI_Init fails within a moment when Steam says no
-        failed = set()
-        for appid, p in started.items():
+        failed = {}
+        for appid, (p, log) in started.items():
             if p.poll() is None:
                 self.procs[appid] = p
+                self.logs[appid] = log
             else:
-                failed.add(appid)
+                log.seek(0)
+                detail = log.read().decode(errors="replace").strip()
+                log.close()
+                failed[appid] = {"code": p.returncode, "detail": detail}
         return failed
 
     def stop(self, appid):
+        log = self.logs.pop(appid, None)
+        if log:
+            log.close()
         p = self.procs.pop(appid, None)
         if p and p.poll() is None:
             try:

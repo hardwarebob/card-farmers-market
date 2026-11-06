@@ -27,6 +27,10 @@ def _json(status, data):
 
 
 def route(farm, path, body):
+    if path == "/api/quit":
+        if farm.on_quit:
+            farm.on_quit()
+        return None
     if path == "/api/sign-in":
         farm.start_sign_in()
         return None

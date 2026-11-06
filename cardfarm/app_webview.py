@@ -1,18 +1,13 @@
-"""Card Farm's window on Windows and macOS: the same page as on Linux, drawn by the system's own web
-view (Edge WebView2 on Windows, WebKit on macOS) through the pywebview library. The page reaches
-the farm through pywebview's in-process bridge; nothing listens on the network.
-
-One copy at a time: starting Card Farm again brings the running copy's window back. Closing the
-window while farming minimises it instead; the page's Quit stops everything."""
+"""Windows and macOS desktop frontend for the separate Card Farm HTTP service."""
 import json
 import os
 import pathlib
-import threading
 import time
 
 import webview
 
-from . import api
+from .service import ensure_running, request, service_is_farming
+from .tray import FrontendTray
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -25,31 +20,31 @@ class Bridge:
         self._app = app
 
     def request(self, method, path, body=""):
-        if path == "/api/quit":
-            threading.Thread(target=self._app.quit, daemon=True).start()
-            return [200, '{"ok": true}']
-        status, _, data = api.answer(self._app.farm, method, path, (body or "").encode())
+        status, _, data = request(self._app.service_url, method, path, (body or "").encode())
         return [status, data.decode()]
 
 
 class WebviewApp:
     def __init__(self, make_farm, data_dir, background=False):
         self.make_farm, self.data_dir, self.background = make_farm, data_dir, background
-        self.farm = self.window = None
+        self.service_url = None
+        self.window = None
         self.quitting = False
+        self.tray = None
 
     def run(self):
         if _show_running_copy(self.data_dir, self.background):
             return 0
-        self.farm = self.make_farm()
-        self.farm.on_quit = self.quit
-        threading.Thread(target=self.farm.run, daemon=True).start()
+        self.service_url = ensure_running(self.data_dir)
         # a file:// address: pywebview starts its built-in web server only for bare paths
         page = pathlib.Path(HERE, "ui", "index.html").as_uri()
         self.window = webview.create_window("Card Farmer's Market", page, js_api=Bridge(self),
                                             width=1100, height=820, min_size=(420, 500),
                                             minimized=self.background, background_color="#0f0e0c")
         self.window.events.closing += self._closing
+        self.window.events.minimized += self._minimized
+        self.tray = FrontendTray(self._show_window, self.quit)
+        self.tray.start()
         selftest = os.environ.get("CARD_FARM_SELFTEST")
         webview.start(self._watch, (selftest,), private_mode=False,
                       storage_path=os.path.join(self.data_dir, "webview"))
@@ -60,20 +55,30 @@ class WebviewApp:
         """Closing while farming minimises: farming carries on. Returning False keeps the window."""
         if self.quitting:
             return True
-        farming = self.farm.session.signed_in and (self.farm.settings["farming"] or self.farm.state["queue"])
-        if not farming:
+        if not service_is_farming(self.service_url):
             return True
-        self.window.minimize()
+        self.window.hide()
         return False
+
+    def _show_window(self):
+        if self.window:
+            self.window.restore()
+            self.window.show()
+
+    def _minimized(self, *args):
+        if not self.quitting and self.window:
+            self.window.hide()
 
     def quit(self):
         self.quitting = True
         self.window.destroy()
 
     def _shutdown(self):
-        self.farm.idler.stop_all()
-        self.farm.save()
+        if self.tray:
+            self.tray.stop()
         _release(self.data_dir)
+        from .service import clear_frontend
+        clear_frontend(self.data_dir)
 
     def _watch(self, selftest):
         """Runs beside the window: brings it forward when Card Farm is started again, and runs the
@@ -82,6 +87,10 @@ class WebviewApp:
             return _selftest(self, selftest)
         flag = os.path.join(self.data_dir, "show-window")
         while not self.quitting:
+            if os.path.exists(os.path.join(self.data_dir, "service-stopping")):
+                self.quitting = True
+                self.window.destroy()
+                return
             if os.path.exists(flag):
                 try:
                     os.remove(flag)
