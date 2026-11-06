@@ -9,7 +9,7 @@ import threading
 import time
 import urllib.parse
 
-from .http import HttpError, get_json, post_json, request
+from .http import HttpError, get_json, post_json, request, retry_after
 
 COMMUNITY = "https://steamcommunity.com"
 CARDS = (753, 6)  # the Steam inventory's Community context, where cards live
@@ -202,7 +202,7 @@ class Prices:
                 self._backoff = min(self._backoff * 2 or 5, 30)
                 self._resume = time.time() + self._backoff * 60
                 if on_wait:
-                    on_wait(self._backoff)
+                    on_wait(self._backoff, url)
             raise
         finally:
             self._last = time.time()
@@ -305,7 +305,7 @@ def _cents(text):
     return round(float(text.strip("$ ").replace(",", "")) * 100) if text else None
 
 
-on_wait = None  # called with the minutes about to be spent waiting out a 429, to tell the page
+on_wait = None  # called with the retry delay in minutes and URL, so the page can report throttling
 
 
 def _patient(call, tries=6):
@@ -323,9 +323,10 @@ def _patient(call, tries=6):
             if e.status != 429 or waits >= tries - 1:
                 raise
             waits += 1
+            delay = max(60.0, retry_after())
             if on_wait:
-                on_wait(1)
-            time.sleep(60)
+                on_wait(max(1, int((delay + 59) // 60)), e.url)
+            time.sleep(delay)
 
 
 # --- actions ---------------------------------------------------------------------------------------

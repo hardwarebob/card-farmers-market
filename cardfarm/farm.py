@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import traceback
+import urllib.parse
 
 from . import market, qr, rules, steam, update
 from .auth import Session
@@ -90,9 +91,10 @@ class Farm(market.MarketParts, market.HeldBoosters, market.PatientBuying):
         self._jobs = threading.Event()
         steam.on_wait = self._slowed_down
 
-    def _slowed_down(self, minutes=1):
-        self._starting(f"Steam asked to slow down; waiting {minutes} min…")
-        self.log(f"Steam said too many requests; market lookups wait {minutes} min", "warn")
+    def _slowed_down(self, minutes=1, url=""):
+        self._starting(f"Steam asked to slow down; retrying in {minutes} min…")
+        endpoint = urllib.parse.urlsplit(url).path if url else "Steam Community request"
+        self.log(f"Steam returned too many requests from {endpoint}; retrying in {minutes} min", "warn")
 
     def _path(self, name):
         return os.path.join(self.data, name)
